@@ -43,9 +43,51 @@ echo "☕ Java: $JAVA_HOME"
 DIST_ZIP="$SCRIPT_DIR/weasis-distributions/target/native-dist/weasis-native.zip"
 
 if [ ! -f "$DIST_ZIP" ]; then
-  echo "❌ Distribuição não encontrada: $DIST_ZIP"
-  echo "   Execute 'mvn clean package -P native' na raiz do projeto primeiro."
-  exit 1
+  echo "⚠️  Distribuição não encontrada. Iniciando build com Maven..."
+
+  # ── Localizar Maven ────────────────────────────────────────────────────────
+  # 1) mvn já está no PATH?
+  if command -v mvn &>/dev/null; then
+    MVN_CMD="$(command -v mvn)"
+  else
+    # 2) Procura em locais comuns de instalação pessoal
+    MVN_CMD=""
+    for candidate in \
+        "$HOME/tools/apache-maven-"*/bin/mvn \
+        "$HOME/.local/share/apache-maven-"*/bin/mvn \
+        "/opt/homebrew/opt/maven/bin/mvn" \
+        "/usr/local/bin/mvn" \
+        "/usr/bin/mvn"; do
+      if [ -x "$candidate" ]; then
+        MVN_CMD="$candidate"
+        break
+      fi
+    done
+
+    if [ -z "$MVN_CMD" ]; then
+      echo "❌ Maven não encontrado."
+      echo "   Instale o Maven ou adicione-o ao PATH e tente novamente."
+      exit 1
+    fi
+  fi
+
+  echo "🔨 Maven: $MVN_CMD"
+  echo "   Executando: clean package -P native -DskipTests"
+  echo "   (isso pode levar vários minutos na primeira vez...)"
+  echo ""
+
+  JAVA_HOME="$JAVA_HOME" "$MVN_CMD" clean package -P native -DskipTests \
+    -f "$SCRIPT_DIR/weasis-distributions/pom.xml"
+
+  if [ $? -ne 0 ]; then
+    echo ""
+    echo "❌ Build falhou. Verifique os erros acima."
+    exit 1
+  fi
+
+  echo ""
+  echo "✅ Build concluído!"
+  echo ""
 fi
 
 WEASIS_HOME="/tmp/weasis_dist"
