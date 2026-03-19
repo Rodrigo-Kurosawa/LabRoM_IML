@@ -20,5 +20,6 @@
     <module>weasis-base-ui</module>
     <module>weasis-base-explorer</module>
     <module>weasis-base-viewer2d</module>
+    <module>weasis-sexo-classifier</module>
   </modules>
 </project>

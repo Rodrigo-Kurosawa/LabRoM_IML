@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <parent>
+    <artifactId>weasis-base-parent</artifactId>
+    <groupId>org.weasis.base</groupId>
+    <version>${revision}${changelist}</version>
+    <relativePath>../weasis-base-parent/pom.xml</relativePath>
+  </parent>
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>org.weasis.base</groupId>
+  <artifactId>weasis-sexo-classifier</artifactId>
+  <packaging>jar</packaging>
+  <name>Sex Classification Plugin [${project.artifactId}]</name>
+  <description>Plugin para classificação automática de sexo em imagens de crânio e pelve usando redes neurais.</description>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>biz.aQute.bnd</groupId>
+        <artifactId>bnd-maven-plugin</artifactId>
+        <executions>
+          <execution>
+            <goals>
+              <goal>bnd-process</goal>
+            </goals>
+          </execution>
+        </executions>
+        <configuration>
+          <bnd><![CDATA[
+            Bundle-Activator: org.weasis.sexo.classifier.internal.Activator
+            Export-Package: org.weasis.sexo.classifier.*
+          ]]></bnd>
+        </configuration>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-jar-plugin</artifactId>
+        <configuration>
+          <archive>
+            <manifestFile>${project.build.outputDirectory}/META-INF/MANIFEST.MF</manifestFile>
+          </archive>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+
+  <dependencies>
+    <dependency>
+      <groupId>org.weasis.core</groupId>
+      <artifactId>weasis-core</artifactId>
+      <version>${project.parent.version}</version>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.weasis.thirdparty</groupId>
+      <artifactId>docking-frames</artifactId>
+    </dependency>
+  </dependencies>
+</project>

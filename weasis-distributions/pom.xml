@@ -427,6 +427,12 @@
                   <version>${app.version}</version>
                   <outputDirectory>${tmp.bundle.dir}</outputDirectory>
                 </artifactItem>
+                <artifactItem>
+                  <groupId>org.weasis.base</groupId>
+                  <artifactId>weasis-sexo-classifier</artifactId>
+                  <version>${app.version}</version>
+                  <outputDirectory>${tmp.bundle.dir}</outputDirectory>
+                </artifactItem>
 
                 <!-- ===================================== -->
                 <!-- Weasis DICOM bundles -->
