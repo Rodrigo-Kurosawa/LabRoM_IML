@@ -5,7 +5,7 @@
 # ---------------------------------------------------------------------------
 
 # Diretório onde este script está localizado (funciona de qualquer lugar)
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
 # ── Localizar Java ──────────────────────────────────────────────────────────
 # Detecta a localização real do executável java e deriva JAVA_HOME a partir dele.
