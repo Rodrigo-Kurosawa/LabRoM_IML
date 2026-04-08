@@ -1,50 +1,51 @@
-# IntelliJ project files 
-*.iml
-*.iws
-*.ipr
-.idea/
-.run/
-
-# eclipse project file
-.settings/
-.classpath
-.project
-
-# NetBeans specific
-nbproject/private/
-build/
-nbbuild/
-dist/
-nbdist/
-nbactions.xml
-nb-configuration.xml
-
-# Ignore Maven files
+# ========================
+# Maven / Java build
+# ========================
 target/
-release.properties
-pom.xml.releaseBackup
-pom.xml.tag
-dependency-reduced-pom.xml
-.flattened-pom.xml
+*.log
 
-# OS generated files
+# Build artifacts
+*.jar
+*.war
+*.ear
+*.zip
+*.tar.gz
+*.xz
+
+# ========================
+# Weasis específico
+# ========================
+weasis-native/
+build-dist/
+
+# ========================
+# OS files
+# ========================
 .DS_Store
 Thumbs.db
 
-# crash file
+# ========================
+# Crash logs
+# ========================
 hs_err*.log
 
-# bndTools
-/generated/
-/index.xml*
-/bin/
-/src/
+# ========================
+# IDEs
+# ========================
+.idea/
+.vscode/
+*.iml
 
-# Mac temporary folders
+# ========================
+# Mac temp folders
+# ========================
 _*/
 
-#snap
+# ========================
+# Snap
+# ========================
 weasis_*.snap
-#comlile
-build-dist
 
+
+.flattened-pom.xml
+*.flattened-pom.xml
