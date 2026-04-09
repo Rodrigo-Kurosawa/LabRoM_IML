@@ -12,6 +12,8 @@ echo "Build concluído"
 # 2. Ir para weasis-distributions
 cd weasis-distributions
 
+mvn package -DskipTests
+
 # 3. Verificar se o zip existe
 ZIP_FILE=$(find . -name "weasis-native*.zip" | head -n 1)
 
