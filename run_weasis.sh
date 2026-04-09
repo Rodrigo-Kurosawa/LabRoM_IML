@@ -25,7 +25,7 @@ fi
 echo "Encontrado: $ZIP_FILE"
 
 # 4. Criar pasta destino
-DEST_DIR="../weasis-native"
+DEST_DIR="../../weasis-native"
 
 rm -rf "$DEST_DIR"
 mkdir -p "$DEST_DIR"
