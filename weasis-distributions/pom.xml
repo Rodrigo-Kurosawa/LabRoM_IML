@@ -508,6 +508,16 @@
                   <outputDirectory>${tmp.bundle.dir}</outputDirectory>
                 </artifactItem>
 
+                <!-- ===================================== -->
+                <!-- LabRoM custom plugins -->
+                <!-- ===================================== -->
+                <artifactItem>
+                  <groupId>org.weasis.sex</groupId>
+                  <artifactId>weasis-sex-classifier</artifactId>
+                  <version>${app.version}</version>
+                  <outputDirectory>${tmp.bundle.dir}</outputDirectory>
+                </artifactItem>
+
               </artifactItems>
             </configuration>
           </execution>

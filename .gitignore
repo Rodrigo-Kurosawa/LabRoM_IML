@@ -47,5 +47,5 @@ _*/
 weasis_*.snap
 
 
-.flattened-pom.xml
+.flattened-pom*.xml
 *.flattened-pom.xml

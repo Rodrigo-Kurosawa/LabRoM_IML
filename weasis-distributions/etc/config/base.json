@@ -150,6 +150,13 @@
       "category": "FELIX_INSTALL"
     },
     {
+      "code": "felix.auto.start.72",
+      "value": "${dollar}{weasis.codebase.url}/bundle/weasis-sex-classifier-${app.version}.jar${xz.ext}",
+      "description": "LabRoM Sex Classification plugin",
+      "type": "A",
+      "category": "FELIX_INSTALL"
+    },
+    {
       "code": "felix.auto.start.75",
       "value": "${dollar}{weasis.codebase.url}/bundle/weasis-dicom-au-${app.version}.jar${xz.ext} ${dollar}{weasis.codebase.url}/bundle/weasis-dicom-wave-${app.version}.jar${xz.ext}",
       "description": "DICOM AU and ECG",

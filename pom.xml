@@ -39,5 +39,6 @@
     <module>weasis-dicom</module>
     <module>weasis-acquire</module>
     <module>tests</module>
+    <module>weasis-sex-classifier</module>
   </modules>
 </project>

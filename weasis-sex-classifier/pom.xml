@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <parent>
+    <artifactId>weasis-parent</artifactId>
+    <groupId>org.weasis</groupId>
+    <!--suppress MavenPropertyInParent -->
+    <version>${revision}${changelist}</version>
+    <relativePath>../weasis-parent/pom.xml</relativePath>
+  </parent>
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>org.weasis.sex</groupId>
+  <artifactId>weasis-sex-classifier</artifactId>
+  <packaging>jar</packaging>
+  <name>Sex Classification Plugin [${project.artifactId}]</name>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>biz.aQute.bnd</groupId>
+        <artifactId>bnd-maven-plugin</artifactId>
+        <configuration>
+          <bnd>
+            Export-Package:!org.weasis.sex.classifier.internal,org.weasis.sex.classifier.*
+          </bnd>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+
+  <dependencies>
+    <!-- Weasis Core API -->
+    <dependency>
+      <groupId>org.weasis.core</groupId>
+      <artifactId>weasis-core</artifactId>
+      <version>${project.parent.version}</version>
+      <scope>provided</scope>
+    </dependency>
+    <!-- Docking framework (for PluginTool/side panel) -->
+    <dependency>
+      <groupId>org.weasis.thirdparty</groupId>
+      <artifactId>docking-frames</artifactId>
+      <version>${dockingframes.version}</version>
+      <scope>provided</scope>
+    </dependency>
+    <!-- DICOM Viewer2d – needed so our factory registers for View2dContainer -->
+    <dependency>
+      <groupId>org.weasis.dicom</groupId>
+      <artifactId>weasis-dicom-viewer2d</artifactId>
+      <version>${project.parent.version}</version>
+      <scope>provided</scope>
+    </dependency>
+    <!-- DICOM codec – to read DICOM tags -->
+    <dependency>
+      <groupId>org.weasis.dicom</groupId>
+      <artifactId>weasis-dicom-codec</artifactId>
+      <version>${project.parent.version}</version>
+      <scope>provided</scope>
+    </dependency>
+  </dependencies>
+</project>
