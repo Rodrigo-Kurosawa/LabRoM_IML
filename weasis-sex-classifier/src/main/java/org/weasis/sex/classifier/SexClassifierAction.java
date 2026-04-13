@@ -239,13 +239,51 @@ public final class SexClassifierAction {
         // ── Header bar (full width) ───────────────────────────────────────
         g.setColor(barBg);
         g.fillRect(0, 0, totalW, headerH);
-        int headerFontSz = Math.max(15, headerH - 20);
-        g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, headerFontSz));
-        g.setColor(Color.WHITE);
+
+        // Auto-fit: shrink font until text fits in one line, then fall back
+        // to two lines if even the minimum font size is too wide.
+        int headerFontSz = Math.max(14, headerH - 22);
+        Font hFont = new Font(Font.SANS_SERIF, Font.BOLD, headerFontSz);
+        g.setFont(hFont);
         FontMetrics hfm = g.getFontMetrics();
-        int htx = (totalW - hfm.stringWidth(headerText)) / 2;
-        int hty = (headerH - hfm.getHeight()) / 2 + hfm.getAscent();
-        g.drawString(headerText, Math.max(8, htx), hty);
+        int pad = 16; // horizontal padding on each side
+        while (hfm.stringWidth(headerText) > totalW - pad && headerFontSz > 11) {
+          headerFontSz--;
+          hFont = new Font(Font.SANS_SERIF, Font.BOLD, headerFontSz);
+          g.setFont(hFont);
+          hfm = g.getFontMetrics();
+        }
+
+        g.setColor(Color.WHITE);
+        if (hfm.stringWidth(headerText) <= totalW - pad) {
+          // Single-line: centred
+          int htx = (totalW - hfm.stringWidth(headerText)) / 2;
+          int hty = (headerH - hfm.getHeight()) / 2 + hfm.getAscent();
+          g.drawString(headerText, Math.max(pad / 2, htx), hty);
+        } else {
+          // Two-line fallback: "General Classification:" / "<label>  (xx.x%)"
+          int sepIdx = headerText.indexOf(": ");
+          String hLine1 = sepIdx >= 0 ? headerText.substring(0, sepIdx + 1)
+                                       : "General Classification:";
+          String hLine2 = sepIdx >= 0 ? headerText.substring(sepIdx + 2) : headerText;
+          // Shrink further so both lines fit
+          while ((hfm.stringWidth(hLine1) > totalW - pad
+                  || hfm.stringWidth(hLine2) > totalW - pad)
+                 && headerFontSz > 9) {
+            headerFontSz--;
+            hFont = new Font(Font.SANS_SERIF, Font.BOLD, headerFontSz);
+            g.setFont(hFont);
+            hfm = g.getFontMetrics();
+          }
+          int lineH = hfm.getHeight();
+          int blockH = lineH * 2 + 2;
+          int baseY  = (headerH - blockH) / 2 + hfm.getAscent();
+          g.drawString(hLine1,
+              Math.max(pad / 2, (totalW - hfm.stringWidth(hLine1)) / 2), baseY);
+          g.drawString(hLine2,
+              Math.max(pad / 2, (totalW - hfm.stringWidth(hLine2)) / 2),
+              baseY + lineH + 2);
+        }
 
         // ── Body row (pivot | separator | heatmap) ────────────────────────
         int bodyY = headerH;

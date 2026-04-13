@@ -445,25 +445,75 @@ public final class DicomExtractor {
     return null;
   }
 
-  /** Same python-finder as PivotDetector. */
+  /**
+   * Finds a usable Python 3 interpreter, preferring the bundled venv shipped
+   * alongside the plugin JAR so the software works without any pre-installed
+   * Python on the target machine.
+   *
+   * <p>Search order:
+   * <ol>
+   *   <li>Bundled venv: {@code <appDir>/python-env/} (co-installed by distribute.sh)</li>
+   *   <li>User-level venv: {@code ~/.weasis/labrom-env/} (created by setup-python.sh)</li>
+   *   <li>System Python 3 / Python on PATH</li>
+   *   <li>Common absolute paths (Homebrew, pyenv, system)</li>
+   * </ol>
+   */
   static String findPython() {
-    for (String candidate : new String[] { "python3", "python" }) {
-      try {
-        Process p = new ProcessBuilder(candidate, "--version")
-            .redirectErrorStream(true).start();
-        if (p.waitFor() == 0)
-          return candidate;
-      } catch (Exception ignored) {
+    // 1. Bundled venv co-located with the plugin JAR
+    //    JAR lives in <appDir>/bundle/, venv in <appDir>/python-env/
+    try {
+      java.io.File jar = new java.io.File(
+          DicomExtractor.class.getProtectionDomain()
+              .getCodeSource().getLocation().toURI());
+      java.io.File appDir = jar.getParentFile().getParentFile(); // up from bundle/
+      for (String rel : new String[]{
+          "python-env/bin/python3",
+          "python-env/bin/python",
+          "python-env/Scripts/python.exe"   // Windows layout
+      }) {
+        java.io.File candidate = new java.io.File(appDir, rel);
+        if (candidate.canExecute()) {
+          LOGGER.info("Using bundled Python venv: {}", candidate);
+          return candidate.getAbsolutePath();
+        }
+      }
+    } catch (Exception ignore) {}
+
+    // 2. User-level venv created by setup-python.sh / setup-python.bat
+    String home = System.getProperty("user.home");
+    for (String rel : new String[]{
+        ".weasis/labrom-env/bin/python3",
+        ".weasis/labrom-env/bin/python",
+        ".weasis/labrom-env/Scripts/python.exe",   // Windows (setup-python.bat)
+        "AppData/Local/Programs/Python/Python312/python.exe", // Windows system fallback
+        "AppData/Local/Programs/Python/Python311/python.exe"
+    }) {
+      java.io.File candidate = new java.io.File(home, rel);
+      if (candidate.canExecute()) {
+        LOGGER.info("Using user-level Python: {}", candidate);
+        return candidate.getAbsolutePath();
       }
     }
-    for (String path : new String[] {
-        "/usr/bin/python3", "/usr/local/bin/python3",
-        "/opt/homebrew/bin/python3",
-        System.getProperty("user.home") + "/.pyenv/shims/python3"
-    }) {
-      if (new java.io.File(path).canExecute())
-        return path;
+
+    // 3. System Python on PATH
+    for (String name : new String[]{"python3", "python"}) {
+      try {
+        Process p = new ProcessBuilder(name, "--version")
+            .redirectErrorStream(true).start();
+        if (p.waitFor() == 0) return name;
+      } catch (Exception ignored) {}
     }
+
+    // 4. Common absolute paths (macOS Homebrew, pyenv, system)
+    for (String path : new String[]{
+        "/usr/bin/python3",
+        "/usr/local/bin/python3",
+        "/opt/homebrew/bin/python3",
+        home + "/.pyenv/shims/python3"
+    }) {
+      if (new java.io.File(path).canExecute()) return path;
+    }
+
     return null;
   }
 

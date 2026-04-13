@@ -42,7 +42,7 @@ def main():
     except ImportError as e:
         print(
             f"FAIL:Missing dependency: {e}. "
-            "Install with: pip install ultralytics torch opencv-python",
+            "Install with: pip install ultralytics torch opencv-python grad-cam",
             flush=True)
         sys.exit(1)
 

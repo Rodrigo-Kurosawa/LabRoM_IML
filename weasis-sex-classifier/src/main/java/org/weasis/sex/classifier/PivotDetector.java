@@ -14,7 +14,6 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
-import java.net.URISyntaxException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -216,23 +215,9 @@ public final class PivotDetector {
   // Helpers
   // ───────────────────────────────────────────────────────────────────────────
 
+  /** Delegates to the canonical finder in {@link DicomExtractor}. */
   private static String findPython() {
-    for (String candidate : new String[]{"python3", "python"}) {
-      try {
-        Process p = new ProcessBuilder(candidate, "--version")
-            .redirectErrorStream(true).start();
-        if (p.waitFor() == 0) return candidate;
-      } catch (Exception ignored) {}
-    }
-    for (String path : new String[]{
-        "/usr/bin/python3",
-        "/usr/local/bin/python3",
-        "/opt/homebrew/bin/python3",
-        System.getProperty("user.home") + "/.pyenv/shims/python3"
-    }) {
-      if (new File(path).canExecute()) return path;
-    }
-    return null;
+    return DicomExtractor.findPython();
   }
 
   /**

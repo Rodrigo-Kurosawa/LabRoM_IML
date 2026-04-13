@@ -135,7 +135,7 @@ public class SexClassifierTool extends PluginTool {
     cardsScroll.revalidate();
     cardsScroll.repaint();
 
-    setStatus("\u2713 Done", new Color(0, 130, 0));
+    setStatus(" ", Color.GRAY);
     mainPanel.revalidate();
     mainPanel.repaint();
   }
@@ -203,6 +203,13 @@ public class SexClassifierTool extends PluginTool {
     lbl.setForeground(Color.WHITE);
     lbl.setAlignmentX(Component.LEFT_ALIGNMENT);
 
+    String pid = (result.patientId != null && !result.patientId.isBlank())
+        ? result.patientId : "—";
+    JLabel patientLbl = new JLabel("Patient: " + pid);
+    patientLbl.setFont(patientLbl.getFont().deriveFont(Font.ITALIC, 11f));
+    patientLbl.setForeground(new Color(210, 210, 210));
+    patientLbl.setAlignmentX(Component.LEFT_ALIGNMENT);
+
     JLabel prob = new JLabel(String.format("%.1f%% confidence", cl.finalProbability * 100));
     prob.setFont(prob.getFont().deriveFont(11f));
     prob.setForeground(new Color(220, 220, 220));
@@ -217,6 +224,8 @@ public class SexClassifierTool extends PluginTool {
     right.setOpaque(false);
     right.setLayout(new BoxLayout(right, BoxLayout.Y_AXIS));
     right.add(lbl);
+    right.add(Box.createVerticalStrut(2));
+    right.add(patientLbl);
     right.add(Box.createVerticalStrut(3));
     right.add(prob);
     right.add(Box.createVerticalStrut(8));
@@ -276,7 +285,7 @@ public class SexClassifierTool extends PluginTool {
     } else {
       JOptionPane.showMessageDialog(mainPanel,
           "No heatmaps available.\n"
-          + "Heatmaps are only generated when pytorch-grad-cam is installed.",
+          + "Heatmaps are only generated when grad-cam is installed.",
           "Export Heatmap", JOptionPane.WARNING_MESSAGE);
     }
   }
