@@ -14,6 +14,7 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.net.URISyntaxException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -42,10 +43,7 @@ public final class PivotDetector {
   /** Name of the bundled inference script inside src/main/resources */
   private static final String INFERENCE_SCRIPT = "pivo_inference.py";
 
-  /** Default model path (same location as in the original pipeline) */
-  private static final String DEFAULT_MODEL_PATH =
-      System.getProperty("user.home")
-          + "/Documents/Iniciação_Científica/Pipeline_software/pivo.pt";
+  private static final String MODEL_FILENAME = "pivo.pt";
 
   private PivotDetector() {}
 
@@ -69,7 +67,7 @@ public final class PivotDetector {
     outputDir.mkdirs();
 
     if (modelPath == null || modelPath.isEmpty()) {
-      modelPath = DEFAULT_MODEL_PATH;
+      modelPath = findModelPath();
     }
 
     // ── 1. Find pivot via Python ResNet-50 ────────────────────────────────────
@@ -235,5 +233,46 @@ public final class PivotDetector {
       if (new File(path).canExecute()) return path;
     }
     return null;
+  }
+
+  /**
+   * Discovers {@code pivo.pt} using three strategies (in order):
+   * <ol>
+   *   <li>JAR-relative: {@code <jar>/../models/pivo.pt} (works in dev / target/)</li>
+   *   <li>Working-directory-relative: {@code models/pivo.pt}</li>
+   *   <li>Absolute path to the LabRoM_IML repository models directory</li>
+   * </ol>
+   */
+  static String findModelPath() {
+    // 1. Relative to the plugin JAR (works when running from target/)
+    try {
+      File jar = new File(
+          PivotDetector.class.getProtectionDomain()
+              .getCodeSource().getLocation().toURI());
+      File candidate = new File(jar.getParentFile().getParentFile(), "models/" + MODEL_FILENAME);
+      if (candidate.exists()) {
+        LOGGER.info("{} found (JAR-relative): {}", MODEL_FILENAME, candidate);
+        return candidate.getAbsolutePath();
+      }
+    } catch (Exception ignore) {}
+
+    // 2. models/ relative to working directory
+    File cwd = new File(System.getProperty("user.dir"), "models/" + MODEL_FILENAME);
+    if (cwd.exists()) {
+      LOGGER.info("{} found (cwd-relative): {}", MODEL_FILENAME, cwd);
+      return cwd.getAbsolutePath();
+    }
+
+    // 3. Absolute path inside the LabRoM_IML repository (OSGi / Weasis native runtime)
+    File repo = new File(System.getProperty("user.home"),
+        "Documents/Iniciação_Científica/LabRoM_IML/weasis-sex-classifier/models/"
+        + MODEL_FILENAME);
+    if (repo.exists()) {
+      LOGGER.info("{} found (repo-absolute): {}", MODEL_FILENAME, repo);
+      return repo.getAbsolutePath();
+    }
+
+    LOGGER.warn("{} not found. Place it in weasis-sex-classifier/models/", MODEL_FILENAME);
+    return "";
   }
 }

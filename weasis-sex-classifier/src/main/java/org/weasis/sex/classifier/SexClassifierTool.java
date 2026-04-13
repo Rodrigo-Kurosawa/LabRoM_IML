@@ -1,8 +1,8 @@
 /*
  * Sex Classification Plugin – LabRoM_IML / Weasis fork
  *
- * Side panel with an inline scrollable image gallery.
- * Results are shown directly inside this panel — no floating dialogs.
+ * Side panel: controls, final verdict, per-image classification table.
+ * Pivot images → main viewer.  Grad-CAM heatmaps → adjacent viewer.
  */
 package org.weasis.sex.classifier;
 
@@ -12,6 +12,9 @@ import java.awt.Color;
 import java.awt.Component;
 import java.awt.Dimension;
 import java.awt.Font;
+import java.awt.GridBagConstraints;
+import java.awt.GridBagLayout;
+import java.awt.Insets;
 import java.io.File;
 import java.net.URI;
 import java.util.ArrayList;
@@ -24,6 +27,7 @@ import javax.swing.BoxLayout;
 import javax.swing.JButton;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
+import javax.swing.JScrollPane;
 import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
 import org.slf4j.Logger;
@@ -51,7 +55,7 @@ public class SexClassifierTool extends PluginTool {
     for (SexClassifierTool tool : INSTANCES) {
       SwingUtilities.invokeLater(() -> {
         if (result.success) {
-          tool.showImages(result.images);
+          tool.showResult(result);
         } else {
           tool.setStatus("\u2717 " + result.error, Color.RED.darker());
         }
@@ -59,27 +63,64 @@ public class SexClassifierTool extends PluginTool {
     }
   }
 
-  // ── UI ────────────────────────────────────────────────────────────────────
-  private final JPanel mainPanel;
-  private final JLabel statusLabel = new JLabel("Ready.", SwingConstants.CENTER);
-  private final JLabel infoLabel   = new JLabel(
+  // ── UI fields ─────────────────────────────────────────────────────────────
+  private final JPanel  mainPanel;
+  private final JLabel  statusLabel  = new JLabel("Ready.", SwingConstants.CENTER);
+  private final JLabel  infoLabel    = new JLabel(
       "Load a DICOM series in the viewer.", SwingConstants.CENTER);
-  private       JButton runBtn;
+
+  // Verdict panel (shown after classification)
+  private final JPanel  verdictPanel = new JPanel(new GridBagLayout());
+  private final JLabel  verdictLabel = new JLabel("", SwingConstants.CENTER);
+  private final JLabel  verdictConf  = new JLabel("", SwingConstants.CENTER);
+
+  // Per-image rows (shown in scroll pane)
+  private final JPanel     rowsPanel  = new JPanel();
+  private final JScrollPane tableScroll;
+
+  private JButton runBtn;
 
   public SexClassifierTool() {
     super(BUTTON_NAME, Insertable.Type.TOOL, 25);
     setDockableWidth(380);
-    mainPanel = new JPanel(new BorderLayout(0, 4));
+
+    rowsPanel.setLayout(new BoxLayout(rowsPanel, BoxLayout.Y_AXIS));
+    tableScroll = new JScrollPane(rowsPanel);
+    tableScroll.setBorder(BorderFactory.createTitledBorder("Per-image results"));
+    tableScroll.getVerticalScrollBar().setUnitIncrement(16);
+    tableScroll.setPreferredSize(new Dimension(360, 200));
+
+    buildVerdictPanel();
+
+    mainPanel = new JPanel(new BorderLayout(0, 6));
     INSTANCES.add(this);
     buildUI();
   }
 
   // ── Build UI ──────────────────────────────────────────────────────────────
 
+  private void buildVerdictPanel() {
+    verdictPanel.setBorder(BorderFactory.createTitledBorder("Result"));
+    verdictPanel.setVisible(false);
+
+    verdictLabel.setFont(verdictLabel.getFont().deriveFont(Font.BOLD, 28f));
+    verdictConf.setFont(verdictConf.getFont().deriveFont(12f));
+    verdictConf.setForeground(Color.DARK_GRAY);
+
+    GridBagConstraints gbc = new GridBagConstraints();
+    gbc.gridx = 0; gbc.gridy = 0;
+    gbc.insets = new Insets(6, 4, 2, 4);
+    gbc.fill = GridBagConstraints.HORIZONTAL;
+    verdictPanel.add(verdictLabel, gbc);
+    gbc.gridy = 1;
+    gbc.insets = new Insets(0, 4, 6, 4);
+    verdictPanel.add(verdictConf, gbc);
+  }
+
   private void buildUI() {
     mainPanel.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
 
-    // Controls — compact strip at the top
+    // ── Controls strip ────────────────────────────────────────────────────
     JPanel controls = new JPanel();
     controls.setLayout(new BoxLayout(controls, BoxLayout.Y_AXIS));
 
@@ -110,20 +151,20 @@ public class SexClassifierTool extends PluginTool {
     statusLabel.setForeground(Color.GRAY);
     controls.add(statusLabel);
 
+    // ── South block: verdict + per-image table ────────────────────────────
+    JPanel south = new JPanel(new BorderLayout(0, 6));
+    south.add(verdictPanel,  BorderLayout.NORTH);
+    south.add(tableScroll,   BorderLayout.CENTER);
+
     mainPanel.add(controls, BorderLayout.NORTH);
+    mainPanel.add(south,    BorderLayout.CENTER);
   }
 
   // ── PluginTool ────────────────────────────────────────────────────────────
 
-  @Override
-  public Component getToolComponent() {
-    return mainPanel;
-  }
+  @Override public Component getToolComponent() { return mainPanel; }
 
-  @Override
-  protected void changeToolWindowAnchor(CLocation clocation) {
-    // no relayout needed
-  }
+  @Override protected void changeToolWindowAnchor(CLocation clocation) {}
 
   // ── Pipeline trigger ──────────────────────────────────────────────────────
 
@@ -150,7 +191,6 @@ public class SexClassifierTool extends PluginTool {
           }
         }
       }
-      // Scan siblings so an adjacent SC series in the same study folder is included
       if (firstFile != null) {
         File dir = firstFile.getParentFile();
         if (dir != null && dir.isDirectory()) {
@@ -181,6 +221,13 @@ public class SexClassifierTool extends PluginTool {
       return;
     }
 
+    // Reset result panels
+    verdictPanel.setVisible(false);
+    rowsPanel.removeAll();
+    tableScroll.setVisible(false);
+    mainPanel.revalidate();
+    mainPanel.repaint();
+
     runBtn.setEnabled(false);
     setStatus("\u23f3 Starting pipeline\u2026", Color.GRAY);
 
@@ -196,48 +243,167 @@ public class SexClassifierTool extends PluginTool {
       progressTimer.stop();
       runBtn.setEnabled(true);
       if (result.success) {
-        showImages(result.images);
+        showResult(result);
       } else {
         setStatus("\u2717 " + result.error, Color.RED.darker());
       }
     });
   }
 
-  // ── Main-viewer integration ───────────────────────────────────────────────
+  // ── Results display ───────────────────────────────────────────────────────
 
-  /** Opens the pivot-window images in the Weasis main viewer. */
-  void showImages(List<File> images) {
-    LOGGER.info("showImages() — {} file(s)", images == null ? 0 : images.size());
+  void showResult(SexClassifierAction.PipelineResult result) {
+    List<File> images = result.images;
+    SexClassifier.ClassificationResult classification = result.classification;
+
+    LOGGER.info("showResult() — {} pivot image(s)", images == null ? 0 : images.size());
+
     if (images == null || images.isEmpty()) {
       setStatus("No images found.", Color.RED.darker());
       return;
     }
-    setStatus("\u2713 " + images.size() + " image(s) — opening in viewer\u2026",
-        new Color(0, 120, 0));
-    openInMainViewer(images);
+
+    // Open composite images (pivot | heatmap) in the main viewer.
+    // Fall back to plain pivot images if composites were not built.
+    List<File> toOpen = (result.composites != null && !result.composites.isEmpty())
+        ? result.composites : images;
+    openInMainViewer(toOpen);
+
+    // Show classification results
+    if (classification != null && classification.isSuccess()) {
+      showVerdict(classification);
+      showPerImageTable(classification.perImage);
+      setStatus(
+          String.format("\u2713 %s (%.1f%%) \u2014 %d image(s)",
+              classification.finalLabel,
+              classification.finalProbability * 100,
+              classification.perImage.size()),
+          new Color(0, 120, 0));
+    } else {
+      String errMsg = (classification != null && classification.error != null)
+          ? classification.error : "classifier unavailable";
+      verdictLabel.setText("\u2717 Error");
+      verdictLabel.setForeground(Color.RED.darker());
+      verdictConf.setText("<html><center>" + errMsg + "</center></html>");
+      verdictConf.setForeground(Color.RED.darker());
+      verdictPanel.setVisible(true);
+      verdictPanel.revalidate();
+      verdictPanel.repaint();
+      setStatus(
+          "\u2713 " + images.size() + " pivot image(s) opened \u2014 classification failed",
+          new Color(0, 100, 0));
+    }
   }
 
+  // ── Verdict panel ─────────────────────────────────────────────────────────
+
+  private void showVerdict(SexClassifier.ClassificationResult result) {
+    String label = result.finalLabel;
+    double prob  = result.finalProbability;
+
+    // Colour: blue for masculine, red for feminine
+    boolean isMale = label.toUpperCase().contains("MASCUL") || label.equalsIgnoreCase("M");
+    Color c = isMale ? new Color(30, 90, 200) : new Color(200, 40, 60);
+
+    verdictLabel.setText(label);
+    verdictLabel.setForeground(c);
+    verdictConf.setText(String.format("%.1f%% confidence (soft vote over %d images)",
+        prob * 100, result.perImage.size()));
+
+    verdictPanel.setVisible(true);
+    verdictPanel.revalidate();
+    verdictPanel.repaint();
+  }
+
+  // ── Per-image table ───────────────────────────────────────────────────────
+
+  private void showPerImageTable(List<SexClassifier.ImageResult> perImage) {
+    rowsPanel.removeAll();
+
+    // Header row
+    JPanel header = makeRow(
+        new Color(60, 60, 60), Color.WHITE,
+        "Image", "Label", "Prob", Font.BOLD);
+    rowsPanel.add(header);
+
+    for (int i = 0; i < perImage.size(); i++) {
+      SexClassifier.ImageResult r = perImage.get(i);
+      Color bg = (i % 2 == 0) ? Color.WHITE : new Color(245, 245, 250);
+      String imgName = r.imageFile != null ? r.imageFile.getName() : "img_" + r.index;
+      String probStr = String.format("%.1f%%", r.probability * 100);
+      boolean male = r.label.toUpperCase().contains("MASCUL") || r.label.equalsIgnoreCase("M");
+      Color labelColor = male ? new Color(30, 90, 200) : new Color(200, 40, 60);
+      JPanel row = makeRow(bg, Color.BLACK, imgName, r.label, probStr, Font.PLAIN);
+      // Colour the label cell
+      for (Component comp : row.getComponents()) {
+        if (comp instanceof JLabel lbl && r.label.equals(lbl.getText())) {
+          lbl.setForeground(labelColor);
+          lbl.setFont(lbl.getFont().deriveFont(Font.BOLD));
+        }
+      }
+      rowsPanel.add(row);
+    }
+
+    tableScroll.setVisible(true);
+    rowsPanel.revalidate();
+    rowsPanel.repaint();
+    tableScroll.revalidate();
+    tableScroll.repaint();
+    mainPanel.revalidate();
+    mainPanel.repaint();
+  }
+
+  private static JPanel makeRow(Color bg, Color fg,
+                                 String col1, String col2, String col3,
+                                 int fontStyle) {
+    JPanel row = new JPanel(new GridBagLayout());
+    row.setBackground(bg);
+    row.setMaximumSize(new Dimension(Integer.MAX_VALUE, 22));
+
+    GridBagConstraints g = new GridBagConstraints();
+    g.fill  = GridBagConstraints.HORIZONTAL;
+    g.insets = new Insets(1, 4, 1, 4);
+
+    g.gridx = 0; g.weightx = 1.0;
+    row.add(styledLabel(col1, fg, fontStyle, SwingConstants.LEFT), g);
+
+    g.gridx = 1; g.weightx = 0.25;
+    row.add(styledLabel(col2, fg, fontStyle, SwingConstants.CENTER), g);
+
+    g.gridx = 2; g.weightx = 0.3;
+    row.add(styledLabel(col3, fg, fontStyle, SwingConstants.RIGHT), g);
+
+    return row;
+  }
+
+  private static JLabel styledLabel(String text, Color fg, int style, int align) {
+    JLabel l = new JLabel(text, align);
+    l.setForeground(fg);
+    l.setFont(l.getFont().deriveFont(style, 11f));
+    return l;
+  }
+
+  // ── Viewer integration ────────────────────────────────────────────────────
+
+  /** Opens {@code images} as a new series in the Weasis main viewer. */
   @SuppressWarnings("unchecked")
   private void openInMainViewer(List<File> images) {
     try {
       MediaReader<MediaElement> firstReader =
           ViewerPluginBuilder.getMedia(images.get(0).toPath());
       if (firstReader == null) {
-        LOGGER.warn("No MediaReader found for {}", images.get(0));
-        setStatus("\u2717 Cannot open images in viewer.", Color.RED.darker());
+        LOGGER.warn("No MediaReader for {}", images.get(0));
         return;
       }
 
       MediaSeries<MediaElement> series = firstReader.getMediaSeries();
       for (int i = 1; i < images.size(); i++) {
-        MediaReader<MediaElement> reader =
+        MediaReader<MediaElement> r =
             ViewerPluginBuilder.getMedia(images.get(i).toPath());
-        if (reader != null) {
-          MediaElement[] elems = reader.getMediaElement();
+        if (r != null) {
+          MediaElement[] elems = r.getMediaElement();
           if (elems != null) {
-            for (MediaElement elem : elems) {
-              series.addMedia(elem);
-            }
+            for (MediaElement elem : elems) series.addMedia(elem);
           }
         }
       }
@@ -246,8 +412,7 @@ public class SexClassifierTool extends PluginTool {
           series, ViewerPluginBuilder.DefaultDataModel, true, true);
 
     } catch (Exception e) {
-      LOGGER.warn("Cannot open pivot images in main viewer: {}", e.getMessage());
-      setStatus("\u2717 Cannot open in viewer: " + e.getMessage(), Color.RED.darker());
+      LOGGER.warn("Cannot open images in viewer: {}", e.getMessage());
     }
   }
 
