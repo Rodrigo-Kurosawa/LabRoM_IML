@@ -40,10 +40,17 @@ BUNDLE_DIR="$BIN_DIR/bundle"
 if [[ "$1" == "--fast" ]]; then
   echo "[FAST MODE] Compilando apenas o plugin weasis-sex-classifier..."
   cd "$SCRIPT_DIR"
-  mvn install -pl weasis-sex-classifier -am -DskipTests -q
+  # Sem -am: só compila o módulo do plugin, dependências já estão em ~/.m2
+  mvn install -pl weasis-sex-classifier -DskipTests -o -q 2>&1 | grep -v "WARNING"
   JAR=$(ls "$SCRIPT_DIR/weasis-sex-classifier/target/weasis-sex-classifier-"*.jar 2>/dev/null | head -n 1)
   if [ -z "$JAR" ]; then
     echo "ERRO: JAR do plugin não encontrado após a compilação."
+    echo "Tentando sem modo offline..."
+    mvn install -pl weasis-sex-classifier -am -DskipTests -q 2>&1 | grep -v "WARNING"
+    JAR=$(ls "$SCRIPT_DIR/weasis-sex-classifier/target/weasis-sex-classifier-"*.jar 2>/dev/null | head -n 1)
+  fi
+  if [ -z "$JAR" ]; then
+    echo "ERRO: JAR do plugin não encontrado. Verifique erros de compilação."
     exit 1
   fi
   if [ ! -d "$BUNDLE_DIR" ]; then
@@ -52,7 +59,10 @@ if [[ "$1" == "--fast" ]]; then
     exit 1
   fi
   cp "$JAR" "$BUNDLE_DIR/"
-  echo "[FAST MODE] Plugin injetado em $BUNDLE_DIR"
+  echo "[FAST MODE] Plugin injetado: $(basename "$JAR")"
+  # Limpar cache OSGi para garantir que o novo JAR seja carregado
+  rm -rf ~/.weasis/cache
+  echo "[FAST MODE] Cache OSGi limpo."
   echo "[FAST MODE] Iniciando Weasis..."
   cd "$BIN_DIR"
   java -cp "weasis-launcher.jar:felix.jar" org.weasis.launcher.AppLauncher
@@ -60,6 +70,10 @@ if [[ "$1" == "--fast" ]]; then
 fi
 
 echo "Iniciando build do Weasis..."
+
+# Matar qualquer processo Weasis/Java em execução para liberar file locks
+pkill -f "weasis-launcher" 2>/dev/null && echo "Processo Weasis anterior encerrado." || true
+sleep 1
 
 # 1. Build do projeto
 mvn clean install -DskipTests
