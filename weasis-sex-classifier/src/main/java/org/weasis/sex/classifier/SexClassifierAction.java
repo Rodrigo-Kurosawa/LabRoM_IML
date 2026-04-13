@@ -3,6 +3,10 @@
  */
 package org.weasis.sex.classifier;
 
+import java.awt.Color;
+import java.awt.Font;
+import java.awt.FontMetrics;
+import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.io.File;
@@ -138,9 +142,11 @@ public final class SexClassifierAction {
 
       // Step 5: Build side-by-side composites (pivot | heatmap) for synchronized viewing
       File compositeDir = tmpDir.resolve("composites").toFile();
-      List<File> composites = buildComposites(pivotImages, classification.perImage, compositeDir);
+      List<File> composites = buildComposites(
+          pivotImages, classification.perImage, compositeDir, classification);
 
-      return PipelineResult.success(pivoDir, pivotImages, classification, composites);
+      String patientId = extractPatientId(viewerFiles);
+      return PipelineResult.success(pivoDir, pivotImages, classification, composites, patientId);
 
     } catch (InterruptedException ie) {
       Thread.currentThread().interrupt();
@@ -156,28 +162,38 @@ public final class SexClassifierAction {
   // ───────────────────────────────────────────────────────────────────────────
 
   /**
-   * For every pivot image, creates a side-by-side PNG: original on the left,
-   * Grad-CAM heatmap on the right (scaled to the same height).  If a heatmap
-   * is missing for a given index the pivot image is saved unchanged so the
-   * series stays complete.
+   * For every pivot image, creates a composite PNG with:
+   * <ul>
+   *   <li>A header bar at the top showing the general classification result.</li>
+   *   <li>Left half: the original pivot image.</li>
+   *   <li>Right half: the Grad-CAM heatmap (scaled to the same height).</li>
+   * </ul>
+   * If a heatmap is missing the pivot image alone fills the slot so the series
+   * length stays consistent.
    *
-   * <p>This runs in the background worker thread — no EDT work here.
+   * <p>Runs in the background worker thread — no EDT calls here.
    */
   private static List<File> buildComposites(
       List<File> pivotImages,
       List<SexClassifier.ImageResult> perImage,
-      File outDir) {
+      File outDir,
+      SexClassifier.ClassificationResult classification) {
 
     outDir.mkdirs();
     List<File> composites = new ArrayList<>();
 
-    // Build a fast index: pivot-list-index → heatmap file
-    java.util.Map<Integer, File> heatmapByIndex = new java.util.HashMap<>();
+    // Quick look-ups: pivot list index → heatmap file, image result
+    java.util.Map<Integer, File>                    heatmapByIndex = new java.util.HashMap<>();
+    java.util.Map<Integer, SexClassifier.ImageResult> resultByIndex = new java.util.HashMap<>();
     for (SexClassifier.ImageResult r : perImage) {
-      if (r.heatmap != null && r.heatmap.exists()) {
-        heatmapByIndex.put(r.index, r.heatmap);
-      }
+      if (r.heatmap != null && r.heatmap.exists()) heatmapByIndex.put(r.index, r.heatmap);
+      resultByIndex.put(r.index, r);
     }
+
+    // Colours derived from the final classification (shared across all frames)
+    Color barBg    = headerBgColor(classification);
+    Color captionBg = barBg.darker();
+    String headerText = buildHeaderText(classification);
 
     for (int i = 0; i < pivotImages.size(); i++) {
       File pivotFile = pivotImages.get(i);
@@ -186,39 +202,82 @@ public final class SexClassifierAction {
         BufferedImage pivot = toRgb(ImageIO.read(pivotFile));
         if (pivot == null) continue;
 
-        File heatFile = heatmapByIndex.get(i);
-        BufferedImage composite;
+        int bodyH  = pivot.getHeight();
+        int pivotW = pivot.getWidth();
 
+        // ── Scale heatmap to pivot height ─────────────────────────────────
+        BufferedImage heatScaled = null;
+        File heatFile = heatmapByIndex.get(i);
         if (heatFile != null) {
           BufferedImage heat = toRgb(ImageIO.read(heatFile));
           if (heat != null) {
-            // Scale heatmap to match pivot height, preserving aspect ratio
-            int h  = pivot.getHeight();
-            int hw = (int) Math.round((double) heat.getWidth() * h / heat.getHeight());
-            BufferedImage heatScaled = new BufferedImage(hw, h, BufferedImage.TYPE_INT_RGB);
-            java.awt.Graphics2D gs = heatScaled.createGraphics();
+            int hw = (int) Math.round((double) heat.getWidth() * bodyH / heat.getHeight());
+            heatScaled = new BufferedImage(hw, bodyH, BufferedImage.TYPE_INT_RGB);
+            Graphics2D gs = heatScaled.createGraphics();
             gs.setRenderingHint(RenderingHints.KEY_INTERPOLATION,
                 RenderingHints.VALUE_INTERPOLATION_BILINEAR);
-            gs.drawImage(heat, 0, 0, hw, h, null);
+            gs.drawImage(heat, 0, 0, hw, bodyH, null);
             gs.dispose();
-
-            // Thin separator line between the two halves
-            int sep = 2;
-            composite = new BufferedImage(
-                pivot.getWidth() + sep + hw, h, BufferedImage.TYPE_INT_RGB);
-            java.awt.Graphics2D gc = composite.createGraphics();
-            gc.setColor(java.awt.Color.DARK_GRAY);
-            gc.fillRect(0, 0, composite.getWidth(), composite.getHeight());
-            gc.drawImage(pivot, 0, 0, null);
-            gc.drawImage(heatScaled, pivot.getWidth() + sep, 0, null);
-            gc.dispose();
-          } else {
-            composite = pivot;
           }
-        } else {
-          composite = pivot; // no heatmap: show pivot alone
         }
 
+        // ── Compute composite dimensions ──────────────────────────────────
+        int sep      = (heatScaled != null) ? 3 : 0;
+        int heatW    = (heatScaled != null) ? heatScaled.getWidth() : 0;
+        int totalW   = pivotW + sep + heatW;
+        int headerH  = Math.min(90, Math.max(54, bodyH / 9));
+        int captionH = Math.min(44, Math.max(28, bodyH / 16));
+        int totalH   = headerH + bodyH + captionH;
+
+        BufferedImage composite = new BufferedImage(totalW, totalH, BufferedImage.TYPE_INT_RGB);
+        Graphics2D g = composite.createGraphics();
+        g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING,
+            RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
+            RenderingHints.VALUE_ANTIALIAS_ON);
+
+        // ── Header bar (full width) ───────────────────────────────────────
+        g.setColor(barBg);
+        g.fillRect(0, 0, totalW, headerH);
+        int headerFontSz = Math.max(15, headerH - 20);
+        g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, headerFontSz));
+        g.setColor(Color.WHITE);
+        FontMetrics hfm = g.getFontMetrics();
+        int htx = (totalW - hfm.stringWidth(headerText)) / 2;
+        int hty = (headerH - hfm.getHeight()) / 2 + hfm.getAscent();
+        g.drawString(headerText, Math.max(8, htx), hty);
+
+        // ── Body row (pivot | separator | heatmap) ────────────────────────
+        int bodyY = headerH;
+        g.drawImage(pivot, 0, bodyY, null);
+        if (heatScaled != null) {
+          g.setColor(Color.DARK_GRAY);
+          g.fillRect(pivotW, bodyY, sep, bodyH);
+          g.drawImage(heatScaled, pivotW + sep, bodyY, null);
+        }
+
+        // ── Per-frame caption (full width, under pivot + heatmap) ────────
+        int captionY = headerH + bodyH;
+        g.setColor(captionBg);
+        g.fillRect(0, captionY, totalW, captionH);
+
+        SexClassifier.ImageResult imgResult = resultByIndex.get(i);
+        if (imgResult != null) {
+          String displayLbl = toDisplayLabel(imgResult.label);
+          String captionText = String.format("Frame %d: %s   %.1f%%",
+              i + 1, displayLbl, imgResult.probability * 100);
+          int captionFontSz = Math.max(12, captionH - 14);
+          g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, captionFontSz));
+          boolean feminine = imgResult.label != null
+              && imgResult.label.toUpperCase().contains("FEMIN");
+          g.setColor(feminine ? Color.decode("#e0566b") : Color.WHITE);
+          FontMetrics cfm = g.getFontMetrics();
+          int ctx = (totalW - cfm.stringWidth(captionText)) / 2;
+          int cty = captionY + (captionH - cfm.getHeight()) / 2 + cfm.getAscent();
+          g.drawString(captionText, Math.max(6, ctx), cty);
+        }
+
+        g.dispose();
         ImageIO.write(composite, "png", dest);
         composites.add(dest);
 
@@ -229,6 +288,56 @@ public final class SexClassifierAction {
 
     LOGGER.info("Built {} composite image(s) in {}", composites.size(), outDir);
     return composites;
+  }
+
+  /** Returns the header-bar background colour based on the final classification. */
+  private static Color headerBgColor(SexClassifier.ClassificationResult c) {
+    if (c != null && c.isSuccess() && c.finalLabel != null) {
+      String lbl = c.finalLabel.toUpperCase();
+      if (lbl.contains("MASCUL")) return Color.decode("#0d2b55"); // dark navy
+      if (lbl.contains("FEMIN"))  return Color.decode("#5c1a2e"); // wine red
+    }
+    return Color.decode("#1a1a2e"); // charcoal default
+  }
+
+  /** Builds the human-readable header line from the final classification. */
+  private static String buildHeaderText(SexClassifier.ClassificationResult c) {
+    if (c == null || !c.isSuccess() || c.finalLabel == null) {
+      return "General Classification: —";
+    }
+    String display = toDisplayLabel(c.finalLabel);
+    return String.format("General Classification: %s   (%.1f%%)",
+        display, c.finalProbability * 100);
+  }
+
+  /**
+   * Maps YOLO class names (Portuguese) to display labels (English).
+   * Falls back to the raw label if no mapping is found.
+   */
+  static String toDisplayLabel(String yoloLabel) {
+    if (yoloLabel == null) return "Unknown";
+    switch (yoloLabel.trim()) {
+      // Skull variants
+      case "Cranio Masculino":
+      case "Cranio Masculina": return "Male Skull";
+      case "Cranio Feminino":
+      case "Cranio Feminina":  return "Female Skull";
+      // Pelvis variants (YOLO may use -o or -a endings)
+      case "Pelve Masculino":
+      case "Pelve Masculina":  return "Male Pelvis";
+      case "Pelve Feminino":
+      case "Pelve Feminina":   return "Female Pelvis";
+      default:
+        // Generic fallback preserving correct English word order
+        String s = yoloLabel.trim();
+        boolean skull  = s.contains("Crani");
+        boolean pelvis = s.contains("Pelv");
+        boolean male   = s.contains("Mascul");
+        boolean female = s.contains("Femin");
+        String sex  = male ? "Male" : female ? "Female" : "";
+        String bone = skull ? "Skull" : pelvis ? "Pelvis" : s;
+        return (sex + " " + bone).trim();
+    }
   }
 
   private static BufferedImage toRgb(BufferedImage img) {
@@ -248,6 +357,21 @@ public final class SexClassifierAction {
     return PivotDetector.findModelPath();
   }
 
+  /** Reads PatientID from the first parseable DICOM file; falls back to a timestamp. */
+  private static String extractPatientId(List<File> files) {
+    for (File f : files) {
+      if (!DicomExtractor.isDicom(f)) continue;
+      try (org.dcm4che3.io.DicomInputStream dis =
+               new org.dcm4che3.io.DicomInputStream(f)) {
+        dis.setIncludeBulkData(org.dcm4che3.io.DicomInputStream.IncludeBulkData.NO);
+        org.dcm4che3.data.Attributes attrs = dis.readDataset();
+        String pid = attrs.getString(org.dcm4che3.data.Tag.PatientID);
+        if (pid != null && !pid.isBlank()) return pid.trim();
+      } catch (Exception ignore) {}
+    }
+    return new java.text.SimpleDateFormat("yyyyMMdd_HHmmss").format(new java.util.Date());
+  }
+
   // ───────────────────────────────────────────────────────────────────────────
   // Result type
   // ───────────────────────────────────────────────────────────────────────────
@@ -258,19 +382,21 @@ public final class SexClassifierAction {
     public final List<File>                         images;      // raw pivot PNGs
     public final List<File>                         composites;  // pivot|heatmap side-by-side
     public final SexClassifier.ClassificationResult classification;
+    public final String                             patientId;
     public final String                             error;
 
     private PipelineResult(boolean s, File d, List<File> i, List<File> comp,
-                            SexClassifier.ClassificationResult c, String e) {
-      success = s; pivoDir = d; images = i; composites = comp; classification = c; error = e;
+                            SexClassifier.ClassificationResult c, String pid, String e) {
+      success = s; pivoDir = d; images = i; composites = comp;
+      classification = c; patientId = pid; error = e;
     }
     public static PipelineResult success(File d, List<File> i,
                                          SexClassifier.ClassificationResult c,
-                                         List<File> comp) {
-      return new PipelineResult(true, d, i, comp, c, null);
+                                         List<File> comp, String pid) {
+      return new PipelineResult(true, d, i, comp, c, pid, null);
     }
     public static PipelineResult error(String msg) {
-      return new PipelineResult(false, null, null, null, null, msg);
+      return new PipelineResult(false, null, null, null, null, null, msg);
     }
   }
 }
