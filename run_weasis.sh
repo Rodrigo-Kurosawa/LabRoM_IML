@@ -10,7 +10,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DEST_DIR="$SCRIPT_DIR/weasis-native"
+DEST_DIR="$(dirname "$SCRIPT_DIR")/weasis-native"
 BIN_DIR="$DEST_DIR/bin-dist/weasis"
 BUNDLE_DIR="$BIN_DIR/bundle"
 MODELS_SRC="$SCRIPT_DIR/weasis-sex-classifier/models"
@@ -96,6 +96,152 @@ if [ -z "$MVN" ] || [ ! -x "$MVN" ]; then
   exit 1
 fi
 echo "Usando Maven: $("$MVN" --version 2>&1 | head -n 1)"
+
+# ---------------------------------------------------------------------------
+# Injetar imagens customizadas com fundo preto (ícone e splash)
+# Espera: assets/icon.png  e  assets/splash.png ao lado deste script.
+# Ferramentas: sips + iconutil (macOS built-in); magick/convert para .ico
+# ---------------------------------------------------------------------------
+
+# Redimensiona src para WxH com fundo preto centralizado.
+# Usa ImageMagick se disponível; senão usa sips (built-in macOS).
+_img_resize_black() {
+  local src="$1" dst="$2" w="$3" h="$4"
+  mkdir -p "$(dirname "$dst")"
+  if command -v magick &>/dev/null; then
+    magick "$src" -resize "${w}x${h}" -background black -gravity center -extent "${w}x${h}" "$dst"
+  elif command -v convert &>/dev/null; then
+    convert "$src" -resize "${w}x${h}" -background black -gravity center -extent "${w}x${h}" "$dst"
+  else
+    # sips: determina qual dimensão é o gargalo, redimensiona e centraliza com pad preto
+    local tmp ow oh scale_h scale_w
+    tmp=$(mktemp /tmp/weasis_img_XXXXXX.png)
+    ow=$(sips -g pixelWidth  "$src" 2>/dev/null | awk '/pixelWidth/{print $2}')
+    oh=$(sips -g pixelHeight "$src" 2>/dev/null | awk '/pixelHeight/{print $2}')
+    scale_h=$(( oh * w / (ow > 0 ? ow : 1) ))   # altura resultante se ajustar pela largura
+    if [ "$scale_h" -le "$h" ]; then
+      sips --resampleWidth "$w" "$src" --out "$tmp" &>/dev/null
+    else
+      sips --resampleHeight "$h" "$src" --out "$tmp" &>/dev/null
+    fi
+    sips -c "$h" "$w" --padColor 000000 "$tmp" --out "$dst" &>/dev/null
+    rm -f "$tmp"
+  fi
+  echo "  [PNG ${w}x${h}] → $dst"
+}
+
+# Gera .icns usando iconutil (macOS built-in).
+_make_icns() {
+  local src="$1" dst="$2"
+  if ! command -v iconutil &>/dev/null; then
+    echo "  AVISO: iconutil não encontrado — $dst não gerado."
+    return
+  fi
+  local tmp
+  tmp=$(mktemp -d /tmp/weasis_iconset_XXXXXX)
+  local iset="$tmp/App.iconset"
+  mkdir "$iset"
+  for entry in "icon_16x16.png:16"     "icon_16x16@2x.png:32" \
+               "icon_32x32.png:32"     "icon_32x32@2x.png:64" \
+               "icon_128x128.png:128"  "icon_128x128@2x.png:256" \
+               "icon_256x256.png:256"  "icon_256x256@2x.png:512" \
+               "icon_512x512.png:512"  "icon_512x512@2x.png:1024"; do
+    local fname="${entry%%:*}" sz="${entry##*:}"
+    _img_resize_black "$src" "$iset/$fname" "$sz" "$sz"
+  done
+  mkdir -p "$(dirname "$dst")"
+  iconutil -c icns "$iset" -o "$dst" \
+    && echo "  [ICNS] → $dst" \
+    || echo "  AVISO: iconutil falhou para $dst"
+  rm -rf "$tmp"
+}
+
+# Gera .ico multi-size (requer ImageMagick).
+_make_ico() {
+  local src="$1" dst="$2"
+  mkdir -p "$(dirname "$dst")"
+  local IMG=""
+  command -v magick   &>/dev/null && IMG="magick"
+  command -v convert  &>/dev/null && [ -z "$IMG" ] && IMG="convert"
+  if [ -n "$IMG" ]; then
+    $IMG "$src" -background black -gravity center \
+      \( -clone 0 -resize 16x16   -extent 16x16   \) \
+      \( -clone 0 -resize 32x32   -extent 32x32   \) \
+      \( -clone 0 -resize 48x48   -extent 48x48   \) \
+      \( -clone 0 -resize 64x64   -extent 64x64   \) \
+      \( -clone 0 -resize 128x128 -extent 128x128 \) \
+      \( -clone 0 -resize 256x256 -extent 256x256 \) \
+      -delete 0 "$dst"
+    echo "  [ICO] → $dst"
+  else
+    echo "  AVISO: ImageMagick não encontrado — $dst ignorado (instale: brew install imagemagick)"
+  fi
+}
+
+_inject_images() {
+  local icon_src="$SCRIPT_DIR/assets/icon.png"
+  local splash_src="$SCRIPT_DIR/assets/splash.png"
+
+  [ ! -f "$icon_src" ] && [ ! -f "$splash_src" ] && return
+
+  echo "Injetando imagens customizadas..."
+
+  if [ -f "$icon_src" ]; then
+    _img_resize_black "$icon_src" "$DEST_DIR/build/script/resources/linux/Weasis.png"    64  64
+    _img_resize_black "$icon_src" "$DEST_DIR/build/script/resources/linux/Dicomizer.png" 64  64
+    _make_ico         "$icon_src" "$DEST_DIR/build/script/resources/windows/Weasis.ico"
+    _make_ico         "$icon_src" "$DEST_DIR/build/script/resources/windows/Dicomizer.ico"
+    _make_icns        "$icon_src" "$DEST_DIR/build/script/resources/macosx/Weasis.icns"
+    _make_icns        "$icon_src" "$DEST_DIR/build/script/resources/macosx/Dicomizer.icns"
+    # Atualiza também o .icns dentro do dist-output (app já gerado)
+    local dist_app
+    for dist_app in "$DEST_DIR/dist-output/"*.app; do
+      local res="$dist_app/Contents/Resources"
+      if [ -d "$res" ]; then
+        local icns
+        for icns in "$res/"*.icns; do
+          [ -f "$icns" ] && _make_icns "$icon_src" "$icns" && echo "  [ICNS] → $icns (dist-output)"
+        done
+      fi
+    done
+  fi
+
+  if [ -f "$splash_src" ]; then
+    # PNG legado (fallback, não é o que o app renderiza)
+    _img_resize_black "$splash_src" "$DEST_DIR/bin-dist/weasis/resources/images/about.png"       374 147
+    _img_resize_black "$splash_src" "$DEST_DIR/bin-dist/weasis/resources/images/about-round.png" 374 147
+    _img_resize_black "$splash_src" "$DEST_DIR/bin-dist/weasis/resources/images/logo-button.png" 140  44
+    # SVG real usado pelo app (WeasisAbout.svg = splash/about dialog)
+    local splash_b64
+    splash_b64=$(base64 -i "$splash_src")
+    local svg_dir="$DEST_DIR/bin-dist/weasis/resources/svg/logo"
+    mkdir -p "$svg_dir"
+    cat > "$svg_dir/WeasisAbout.svg" << SVGEOF
+<svg width="448" height="162" viewBox="0 0 448 162" xmlns="http://www.w3.org/2000/svg">
+  <rect width="448" height="162" fill="#000000"/>
+  <image href="data:image/png;base64,${splash_b64}" x="0" y="0" width="448" height="162" preserveAspectRatio="xMidYMid meet"/>
+</svg>
+SVGEOF
+    echo "  [SVG splash] → $svg_dir/WeasisAbout.svg"
+  fi
+
+  if [ -f "$icon_src" ]; then
+    # SVG real usado pelo app para ícones na UI (Weasis.svg, Dicomizer.svg)
+    local icon_b64
+    icon_b64=$(base64 -i "$icon_src")
+    local svg_dir="$DEST_DIR/bin-dist/weasis/resources/svg/logo"
+    mkdir -p "$svg_dir"
+    for svg_name in Weasis.svg Dicomizer.svg; do
+      cat > "$svg_dir/$svg_name" << SVGEOF
+<svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
+  <rect width="16" height="16" fill="#000000"/>
+  <image href="data:image/png;base64,${icon_b64}" x="0" y="0" width="16" height="16" preserveAspectRatio="xMidYMid meet"/>
+</svg>
+SVGEOF
+      echo "  [SVG icon] → $svg_dir/$svg_name"
+    done
+  fi
+}
 
 # ---------------------------------------------------------------------------
 # Copiar modelos (.pt) para bin-dist/weasis/models/
@@ -192,7 +338,9 @@ if [[ "$1" == "--fast" ]]; then
   rm -rf ~/.weasis/cache
   echo "[FAST] Cache OSGi limpo. Iniciando Weasis..."
   cd "$BIN_DIR"
-  java -cp "weasis-launcher.jar:felix.jar" org.weasis.launcher.AppLauncher
+  java -Xdock:name="LabRoM_IML" \
+     -Xdock:icon="$SCRIPT_DIR/assets/icon.png" \
+     -cp "weasis-launcher.jar:felix.jar" org.weasis.launcher.AppLauncher
   exit 0
 fi
 
@@ -225,6 +373,43 @@ mkdir -p "$DEST_DIR"
 unzip "$ZIP_FILE" -d "$DEST_DIR"
 echo "Extraído para $DEST_DIR"
 
+# Copiar scripts de distribuição para weasis-native
+[ -f "$SCRIPT_DIR/distribute.sh" ] && cp "$SCRIPT_DIR/distribute.sh" "$DEST_DIR/" \
+  && echo "  Copiado: distribute.sh"
+[ -f "$SCRIPT_DIR/package-weasis.sh" ] && cp "$SCRIPT_DIR/package-weasis.sh" "$DEST_DIR/build/script/package-weasis.sh" \
+  && echo "  Copiado: package-weasis.sh -> build/script/"
+
+# Renomear aplicação nos JSONs de configuração
+_rename_app_in_conf() {
+  local conf_dir="$DEST_DIR/bin-dist/weasis/conf"
+  local py=""
+  for c in /Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3 python3 python; do
+    command -v "$c" &>/dev/null 2>&1 && py="$c" && break
+  done
+  [ -z "$py" ] && echo "AVISO: Python não encontrado — nome do app não alterado nos JSONs." && return
+  for f in base.json non-dicom-explorer.json dicomizer.json; do
+    [ -f "$conf_dir/$f" ] || continue
+    "$py" - "$conf_dir/$f" <<'PYEOF'
+import json, sys
+path = sys.argv[1]
+with open(path) as fh: data = json.load(fh)
+def update(obj):
+    if isinstance(obj, dict):
+        if obj.get('code') == 'weasis.name': obj['value'] = 'LabRoM_IML'
+        for v in obj.values(): update(v)
+    elif isinstance(obj, list):
+        for v in obj: update(v)
+update(data)
+with open(path, 'w') as fh: json.dump(data, fh, indent=2, ensure_ascii=False)
+PYEOF
+    echo "  Nome atualizado: $f"
+  done
+}
+_rename_app_in_conf
+
+# Injetar imagens customizadas (ícone e splash)
+_inject_images
+
 # Injetar plugins customizados
 echo "Injetando plugins customizados..."
 for PLUGIN_JAR in "$SCRIPT_DIR/weasis-sex-classifier/target/"*.jar; do
@@ -243,4 +428,6 @@ fi
 
 echo "Iniciando Weasis..."
 cd "$BIN_DIR"
-java -cp "weasis-launcher.jar:felix.jar" org.weasis.launcher.AppLauncher
+java -Xdock:name="LabRoM_IML" \
+     -Xdock:icon="$SCRIPT_DIR/assets/icon.png" \
+     -cp "weasis-launcher.jar:felix.jar" org.weasis.launcher.AppLauncher
