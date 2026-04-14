@@ -219,8 +219,8 @@ public final class SexClassifier {
       finalProb = sums.get(finalLabel) / perImage.size();
     }
 
-    LOGGER.info("Classification complete: {} ({:.1%}) over {} image(s)",
-        finalLabel, finalProb, perImage.size());
+    LOGGER.info("Classification complete: {} ({}) over {} image(s)",
+        finalLabel, String.format("%.1f%%", finalProb * 100), perImage.size());
     return ClassificationResult.success(perImage, finalLabel, finalProb);
   }
 
@@ -262,16 +262,8 @@ public final class SexClassifier {
       return cwd.getAbsolutePath();
     }
 
-    // 3. Absolute path inside the LabRoM_IML repository (OSGi / Weasis native runtime)
-    File repo = new File(System.getProperty("user.home"),
-        "Documents/Iniciação_Científica/LabRoM_IML/weasis-sex-classifier/models/"
-        + MODEL_FILENAME);
-    if (repo.exists()) {
-      LOGGER.info("{} found (repo-absolute): {}", MODEL_FILENAME, repo);
-      return repo.getAbsolutePath();
-    }
-
-    LOGGER.warn("{} not found. Place it in weasis-sex-classifier/models/", MODEL_FILENAME);
+    LOGGER.warn("{} not found. Run run_weasis.sh to copy models into bin-dist/weasis/models/",
+        MODEL_FILENAME);
     return "";
   }
 }
