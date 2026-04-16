@@ -207,7 +207,7 @@ _inject_images() {
   fi
 
   if [ -f "$splash_src" ]; then
-    # PNG legado (fallback, não é o que o app renderiza)
+    # PNGs de banner/splash — usam splash.png (landscape, 1200x590) como fonte
     _img_resize_black "$splash_src" "$DEST_DIR/bin-dist/weasis/resources/images/about.png"       374 147
     _img_resize_black "$splash_src" "$DEST_DIR/bin-dist/weasis/resources/images/about-round.png" 374 147
     _img_resize_black "$splash_src" "$DEST_DIR/bin-dist/weasis/resources/images/logo-button.png" 140  44
@@ -233,9 +233,9 @@ SVGEOF
     mkdir -p "$svg_dir"
     for svg_name in Weasis.svg Dicomizer.svg; do
       cat > "$svg_dir/$svg_name" << SVGEOF
-<svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
-  <rect width="16" height="16" fill="#000000"/>
-  <image href="data:image/png;base64,${icon_b64}" x="0" y="0" width="16" height="16" preserveAspectRatio="xMidYMid meet"/>
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <rect width="512" height="512" fill="#000000"/>
+  <image href="data:image/png;base64,${icon_b64}" x="0" y="0" width="512" height="512" preserveAspectRatio="xMidYMid meet"/>
 </svg>
 SVGEOF
       echo "  [SVG icon] → $svg_dir/$svg_name"
@@ -340,6 +340,7 @@ if [[ "$1" == "--fast" ]]; then
   cd "$BIN_DIR"
   java -Xdock:name="LabRoM_IML" \
      -Xdock:icon="$SCRIPT_DIR/assets/icon.png" \
+     -Dweasis.name="LabRoM_IML" \
      -cp "weasis-launcher.jar:felix.jar" org.weasis.launcher.AppLauncher
   exit 0
 fi
@@ -410,6 +411,59 @@ _rename_app_in_conf
 # Injetar imagens customizadas (ícone e splash)
 _inject_images
 
+# Renomear app nos arquivos de bundle gerados pelo jpackage
+_patch_app_name() {
+  local NEW_EXE="LabRoM-IML"
+  for app in "$DEST_DIR/dist-output/"*.app; do
+    [ -d "$app" ] || continue
+    local plist="$app/Contents/Info.plist"
+
+    # --- Renomear binário principal (MacOS/<old> → MacOS/LabRoM-IML) ---
+    local old_exe
+    old_exe=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$plist" 2>/dev/null || \
+              basename "$app" .app)
+    if [ "$old_exe" != "$NEW_EXE" ] && [ -f "$app/Contents/MacOS/$old_exe" ]; then
+      mv "$app/Contents/MacOS/$old_exe" "$app/Contents/MacOS/$NEW_EXE"
+      /usr/libexec/PlistBuddy -c "Set :CFBundleExecutable $NEW_EXE" "$plist" 2>/dev/null || true
+      echo "  Binário renomeado: MacOS/$NEW_EXE"
+    fi
+
+    # --- Renomear .cfg (app/<old>.cfg → app/LabRoM-IML.cfg) ---
+    local cfg_old="$app/Contents/app/${old_exe}.cfg"
+    local cfg_new="$app/Contents/app/${NEW_EXE}.cfg"
+    [ -f "$cfg_old" ] && mv "$cfg_old" "$cfg_new"
+
+    # --- Injeta -Dweasis.name no .cfg se ainda não estiver ---
+    if [ -f "$cfg_new" ] && ! grep -q "weasis.name" "$cfg_new"; then
+      sed -i '' 's/^java-options=--enable-native-access=ALL-UNNAMED/java-options=--enable-native-access=ALL-UNNAMED\njava-options=-Dweasis.name=LabRoM_IML/' "$cfg_new"
+    fi
+    echo "  Config: $cfg_new"
+
+    # --- Atualiza CFBundleName e CFBundleDisplayName no Info.plist ---
+    if [ -f "$plist" ]; then
+      /usr/libexec/PlistBuddy -c "Set :CFBundleName LabRoM_IML" "$plist" 2>/dev/null || true
+      /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName LabRoM_IML" "$plist" 2>/dev/null || \
+        /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string LabRoM_IML" "$plist" 2>/dev/null || true
+    fi
+
+    # --- Sincroniza PNGs de resources do bin-dist para dentro do .app ---
+    local img_src="$DEST_DIR/bin-dist/weasis/resources/images"
+    local img_dst="$app/Contents/app/resources/images"
+    if [ -d "$img_src" ] && [ -d "$img_dst" ]; then
+      cp -f "$img_src/logo-button.png"  "$img_dst/" 2>/dev/null || true
+      cp -f "$img_src/about.png"        "$img_dst/" 2>/dev/null || true
+      cp -f "$img_src/about-round.png"  "$img_dst/" 2>/dev/null || true
+    fi
+
+    # --- Re-assina o app após modificações ---
+    chmod -R u+rw "$app" 2>/dev/null || true
+    codesign --force --deep --sign - "$app" 2>/dev/null \
+      && echo "  Assinado: $app" \
+      || echo "  AVISO: codesign falhou para $app"
+  done
+}
+_patch_app_name
+
 # Injetar plugins customizados
 echo "Injetando plugins customizados..."
 for PLUGIN_JAR in "$SCRIPT_DIR/weasis-sex-classifier/target/"*.jar; do
@@ -430,4 +484,5 @@ echo "Iniciando Weasis..."
 cd "$BIN_DIR"
 java -Xdock:name="LabRoM_IML" \
      -Xdock:icon="$SCRIPT_DIR/assets/icon.png" \
+     -Dweasis.name="LabRoM_IML" \
      -cp "weasis-launcher.jar:felix.jar" org.weasis.launcher.AppLauncher
