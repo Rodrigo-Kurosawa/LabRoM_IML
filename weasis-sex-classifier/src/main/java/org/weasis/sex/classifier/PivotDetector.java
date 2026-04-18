@@ -118,10 +118,10 @@ public final class PivotDetector {
 
     LOGGER.info("Running pivot inference on {} images", images.size());
     ProcessBuilder pb = new ProcessBuilder(cmd);
-    pb.redirectErrorStream(false);
+    pb.redirectErrorStream(true); // merge stderr→stdout to avoid pipe-buffer deadlock on Windows
     Process proc = pb.start();
 
-    // Read stdout → pick best index
+    // Read stdout → pick best index (stderr lines are non-numeric and caught below)
     int bestIndex = images.size() / 2;
     double bestProb = -1.0;
     try (BufferedReader reader =
@@ -145,17 +145,11 @@ public final class PivotDetector {
       }
     }
 
-    // Drain stderr for debugging
-    try (BufferedReader err =
-        new BufferedReader(new InputStreamReader(proc.getErrorStream()))) {
-      err.lines().forEach(l -> LOGGER.debug("  [inference err] {}", l));
-    }
-
     int exitCode = proc.waitFor();
     if (exitCode != 0) {
       LOGGER.warn("Inference script exited with code {}. Using index {}.", exitCode, bestIndex);
     } else {
-      LOGGER.info("Pivot found at index {} (prob={:.3f})", bestIndex, bestProb);
+      LOGGER.info("Pivot found at index {} (prob={})", bestIndex, String.format("%.3f", bestProb));
     }
 
     scriptFile.deleteOnExit();

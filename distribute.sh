@@ -441,12 +441,14 @@ case "$TARGET_PLATFORM" in
     ;;
 
   windows)
-    die "Para gerar instaladores Windows (.msi), você precisa:
-  1. Copiar o conteúdo de weasis-native para um Windows com JDK >= 25 e WiX Toolset 4.
-  2. Executar no PowerShell (ou Git Bash):
-       bash build/script/package-weasis.sh --jdk C:/path/to/jdk --input bin-dist --output dist-output
-  
-  Alternativamente, use um pipeline CI/CD (GitHub Actions) — veja DISTRIBUICAO.md."
+    die "Para gerar instaladores Windows (.msi) a partir do Windows, use:
+  PowerShell:
+       .\\distribute.ps1 [-Jdk C:\\path\\to\\jdk25] [-Output .\\dist-output]
+
+  Ou via Git Bash (requer WiX Toolset 4 instalado):
+       bash build/script/package-weasis.sh --jdk /c/path/to/jdk --input bin-dist --output dist-output
+
+  Alternativamente, use GitHub Actions (gera MSI automaticamente — veja o workflow build-installer.yml)."
     ;;
 
   *)
