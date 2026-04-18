@@ -49,7 +49,9 @@ if (-not $JAVA_HOME_FOUND) {
 }
 $env:JAVA_HOME = $JAVA_HOME_FOUND
 $env:PATH = "$JAVA_HOME_FOUND\bin;$env:PATH"
-Write-Host "Usando Java: $(java -version 2>&1 | Select-Object -First 1)  [JAVA_HOME=$JAVA_HOME_FOUND]"
+# Suppress JDK 26 native-access warnings from Maven's jansi library
+$env:MAVEN_OPTS = "--enable-native-access=ALL-UNNAMED"
+Write-Host "Usando Java: $(& "$JAVA_HOME_FOUND\bin\java.exe" -version 2>&1 | Select-Object -First 1)  [JAVA_HOME=$JAVA_HOME_FOUND]"
 
 # ---------------------------------------------------------------------------
 # Detectar Maven
@@ -74,7 +76,7 @@ if (-not $MVN) {
     Write-Error "ERRO: Maven (mvn) nao encontrado. Instale Maven 3.8+ e adicione ao PATH."
     exit 1
 }
-Write-Host "Usando Maven: $(& $MVN --version 2>&1 | Select-Object -First 1)"
+Write-Host "Usando Maven: $((& $MVN --version 2>&1) | Where-Object { $_ -notmatch '^WARNING' } | Select-Object -First 1)"
 
 # ---------------------------------------------------------------------------
 # Injetar imagens customizadas
@@ -210,11 +212,24 @@ function Setup-Python {
     }
 
     $pythonCmd = $null
-    foreach ($c in @("python", "python3", "py")) {
-        try {
-            $ver = & $c -c "import sys; print(sys.version_info.major*10+sys.version_info.minor)" 2>$null
-            if ($ver -match '^\d+$' -and [int]$ver -ge 39) { $pythonCmd = $c; break }
-        } catch {}
+    # Check known Windows install paths first (avoids MS Store stub shadowing)
+    $knownPaths = @(
+        "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe",
+        "$env:LOCALAPPDATA\Programs\Python\Python311\python.exe",
+        "$env:LOCALAPPDATA\Programs\Python\Python310\python.exe",
+        "$env:LOCALAPPDATA\Programs\Python\Python39\python.exe"
+    )
+    foreach ($p in $knownPaths) {
+        if (Test-Path $p) { $pythonCmd = $p; break }
+    }
+    # Fallback: try PATH commands (skip if they resolve to the Store stub)
+    if (-not $pythonCmd) {
+        foreach ($c in @("python", "python3", "py")) {
+            try {
+                $ver = & $c -c "import sys; print(sys.version_info.major*10+sys.version_info.minor)" 2>$null
+                if ($ver -match '^\d+$' -and [int]$ver -ge 39) { $pythonCmd = $c; break }
+            } catch {}
+        }
     }
 
     if (-not $pythonCmd) {
@@ -238,8 +253,15 @@ function Setup-Python {
 function Rename-AppInConf {
     $confDir = Join-Path $BIN_DIR "conf"
     $pyCmd = $null
-    foreach ($c in @("python", "python3")) {
-        if (Get-Command $c -ErrorAction SilentlyContinue) { $pyCmd = $c; break }
+    foreach ($p in @("$env:LOCALAPPDATA\Programs\Python\Python312\python.exe",
+                     "$env:LOCALAPPDATA\Programs\Python\Python311\python.exe")) {
+        if (Test-Path $p) { $pyCmd = $p; break }
+    }
+    if (-not $pyCmd) {
+        foreach ($c in @("python", "python3")) {
+            $found = Get-Command $c -ErrorAction SilentlyContinue
+            if ($found -and $found.Source -notlike "*WindowsApps*") { $pyCmd = $c; break }
+        }
     }
     if (-not $pyCmd) {
         Write-Warning "AVISO: Python nao encontrado — nome do app nao alterado nos JSONs."
