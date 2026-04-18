@@ -191,6 +191,7 @@ _inject_images() {
     _img_resize_black "$icon_src" "$DEST_DIR/build/script/resources/linux/Dicomizer.png" 64  64
     _make_ico         "$icon_src" "$DEST_DIR/build/script/resources/windows/Weasis.ico"
     _make_ico         "$icon_src" "$DEST_DIR/build/script/resources/windows/Dicomizer.ico"
+    _make_icns        "$icon_src" "$DEST_DIR/build/script/resources/macosx/LabRoM_IML.icns"
     _make_icns        "$icon_src" "$DEST_DIR/build/script/resources/macosx/Weasis.icns"
     _make_icns        "$icon_src" "$DEST_DIR/build/script/resources/macosx/Dicomizer.icns"
     # Atualiza também o .icns dentro do dist-output (app já gerado)
