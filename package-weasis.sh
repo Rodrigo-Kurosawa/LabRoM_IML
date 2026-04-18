@@ -12,7 +12,7 @@ PACKAGE=YES
 # jdk.jdwp.agent => package for debugging agent
 # Base modules for all platforms
 JDK_MODULES_BASE="java.base,java.compiler,java.datatransfer,java.net.http,java.desktop,java.logging,java.management,java.prefs,java.xml,jdk.localedata,jdk.charsets,jdk.crypto.ec,jdk.crypto.cryptoki,jdk.jdwp.agent,java.sql"
-NAME="Weasis"
+NAME="LabRoM_IML"
 IDENTIFIER="org.weasis.launcher"
 
 # Aux functions:
@@ -254,6 +254,7 @@ else
 fi
 declare -a commonOptions=("--java-options" "-Dgosh.port=17179" \
 "--java-options" "--enable-native-access=ALL-UNNAMED" \
+"--java-options" "-Dweasis.name=LabRoM_IML" \
 "--java-options" "-Djavax.accessibility.assistive_technologies=org.weasis.launcher.EmptyAccessibilityProvider" \
 "--java-options" "-Djavax.accessibility.screen_magnifier_present=false");
 
@@ -283,7 +284,7 @@ if [ "$PACKAGE" = "YES" ] ; then
       $JPKGCMD --type "$installerType" --app-image "$IMAGE_PATH" --dest "$OUTPUT_PATH"  --name "$NAME" --resource-dir "$RES" \
       --license-file "$INPUT_PATH/Licence.txt" --description "Weasis DICOM viewer" --vendor "$VENDOR" \
       --copyright "$COPYRIGHT" --app-version "$WEASIS_CLEAN_VERSION" --file-associations "${curPath}/file-associations.properties" \
-      --linux-app-release "$REVISON_INC" --linux-package-name "weasis" --linux-deb-maintainer "Nicolas Roduit" --linux-rpm-license-type "EPL-2.0" \
+      --linux-app-release "$REVISON_INC" --linux-package-name "labrom-iml" --linux-deb-maintainer "LabRoM/IML Team" --linux-rpm-license-type "EPL-2.0" \
       --linux-menu-group "Viewer;MedicalSoftware;Graphics;" --linux-app-category "science" --linux-package-deps "${DEPENDENCIES}" \
       --linux-shortcut "${tmpArgs[@]}" --verbose
       if [ -d "${TEMP_PATH}" ] ; then
