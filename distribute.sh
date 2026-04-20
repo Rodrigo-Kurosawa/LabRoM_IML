@@ -15,7 +15,7 @@
 #
 # Pré-requisitos:
 #   macOS  : jdk >= 25 com jpackage; Xcode CLI Tools
-#   Linux  : jdk >= 25 com jpackage; dpkg-deb (deb) e/ou rpm-build (rpm)
+#   Linux  : jdk >= 25 com jpackage; dpkg-deb (fakeroot + dpkg-deb)
 #   Windows: jdk >= 25 com jpackage; WiX Toolset >= 4 (para gerar MSI)
 #   (Linux cruzado): Docker + QEMU (ver seção README deste script)
 # =============================================================================
@@ -321,9 +321,9 @@ _app_dir_in_image() {
   local platform="$1"   # macosx | linux | windows
   local out="$2"        # caminho de saída do jpackage
   case "$platform" in
-    macosx)  echo "${out}/Weasis.app/Contents/app" ;;
-    linux)   echo "${out}/Weasis/lib/app" ;;
-    windows) echo "${out}/Weasis/app" ;;
+    macosx)  echo "${out}/LabRoM_IML.app/Contents/app" ;;
+    linux)   echo "${out}/LabRoM_IML/lib/app" ;;
+    windows) echo "${out}/LabRoM_IML/app" ;;
     *)       echo "" ;;
   esac
 }
@@ -417,10 +417,41 @@ case "$TARGET_PLATFORM" in
 
   linux)
     if [[ "$CURRENT_PLATFORM" = "linux" ]]; then
-      # Build nativo no Linux
-      build_native
-      _install_venv_in_app "$(_app_dir_in_image linux "$OUTPUT_PATH")"
-      success "Instaladores Linux (.deb/.rpm) gerados em: ${OUTPUT_PATH}"
+      # Passo 1: gera apenas a imagem do app
+      bash "$BUILD_SCRIPT" --jdk "$JDK_PATH" --input "$BIN_DIST" --output "$OUTPUT_PATH" --no-installer
+
+      # Passo 2: instala o venv Python dentro da imagem
+      _LINUX_APP_DIR="$(_app_dir_in_image linux "$OUTPUT_PATH")"
+      _install_venv_in_app "$_LINUX_APP_DIR"
+
+      if [[ "$PACKAGE" = "YES" ]]; then
+        # Passo 3: move o venv para fora da imagem antes de empacotar.
+        # O jpackage roda dpkg -S em cada .so do app — com PyTorch isso são
+        # centenas de arquivos e torna o build muito lento.
+        _VENV_TMP="/tmp/labrom-venv-$$"
+        if [[ -d "${_LINUX_APP_DIR}/python-env" ]]; then
+          mv "${_LINUX_APP_DIR}/python-env" "$_VENV_TMP"
+        fi
+
+        # Passo 4: gera o .deb sem o venv (rápido — sem scan de .so do torch)
+        bash "$BUILD_SCRIPT" --jdk "$JDK_PATH" --input "$BIN_DIST" --output "$OUTPUT_PATH" --installer-only
+
+        # Passo 5: reinjecta o venv no .deb via repack e restaura na imagem local
+        if [[ -d "$_VENV_TMP" ]]; then
+          _DEB_FILE=$(ls "$OUTPUT_PATH"/*.deb 2>/dev/null | head -1)
+          if [[ -n "$_DEB_FILE" ]]; then
+            _REPACK_DIR="/tmp/labrom-repack-$$"
+            info "Reempacotando .deb com o venv Python..."
+            dpkg-deb -R "$_DEB_FILE" "$_REPACK_DIR"
+            cp -Rf "$_VENV_TMP" "$_REPACK_DIR/opt/labrom-iml/lib/app/python-env"
+            fakeroot dpkg-deb -b "$_REPACK_DIR" "$_DEB_FILE"
+            rm -rf "$_REPACK_DIR"
+            success "Venv reinjetado no .deb"
+          fi
+          mv "$_VENV_TMP" "${_LINUX_APP_DIR}/python-env"
+        fi
+      fi
+      success "Instalador Linux (.deb) gerado em: ${OUTPUT_PATH}"
     else
       # Build cruzado via Docker (funciona no macOS também)
       warn "Você está no macOS — usando Docker para gerar instaladores Linux."

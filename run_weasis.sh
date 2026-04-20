@@ -312,10 +312,7 @@ _setup_python() {
 if [[ "$1" == "--fast" ]]; then
   echo "[FAST] Compilando plugin weasis-sex-classifier..."
   cd "$SCRIPT_DIR"
-  "$MVN" install -pl weasis-sex-classifier -DskipTests -o -q 2>&1 \
-    | grep -v "WARNING" || \
-  "$MVN" install -pl weasis-sex-classifier -am -DskipTests -q 2>&1 \
-    | grep -v "WARNING"
+  "$MVN" install -pl weasis-sex-classifier -DskipTests -q
 
   JAR=$(ls "$SCRIPT_DIR/weasis-sex-classifier/target/weasis-sex-classifier-"*.jar \
         2>/dev/null | head -n 1)
@@ -339,10 +336,10 @@ if [[ "$1" == "--fast" ]]; then
   rm -rf ~/.weasis/cache
   echo "[FAST] Cache OSGi limpo. Iniciando Weasis..."
   cd "$BIN_DIR"
-  java -Xdock:name="LabRoM_IML" \
-     -Xdock:icon="$SCRIPT_DIR/assets/icon.png" \
-     -Dweasis.name="LabRoM_IML" \
-     -cp "weasis-launcher.jar:felix.jar" org.weasis.launcher.AppLauncher
+  JAVA_ARGS=(-Dweasis.name="LabRoM_IML" -cp "weasis-launcher.jar:felix.jar")
+  [[ "$(uname -s)" == "Darwin" ]] && \
+    JAVA_ARGS=("-Xdock:name=LabRoM_IML" "-Xdock:icon=$SCRIPT_DIR/assets/icon.png" "${JAVA_ARGS[@]}")
+  java "${JAVA_ARGS[@]}" org.weasis.launcher.AppLauncher
   exit 0
 fi
 
@@ -353,7 +350,6 @@ echo "Iniciando build do Weasis..."
 
 # Mata instâncias anteriores
 pkill -f "weasis-launcher" 2>/dev/null && echo "Processo Weasis anterior encerrado." || true
-sleep 1
 
 cd "$SCRIPT_DIR"
 "$MVN" clean install -DskipTests
@@ -384,10 +380,8 @@ echo "Extraído para $DEST_DIR"
 # Renomear aplicação nos JSONs de configuração
 _rename_app_in_conf() {
   local conf_dir="$DEST_DIR/bin-dist/weasis/conf"
-  local py=""
-  for c in /Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3 python3 python; do
-    command -v "$c" &>/dev/null 2>&1 && py="$c" && break
-  done
+  local py
+  py=$(command -v python3 2>/dev/null || command -v python 2>/dev/null)
   [ -z "$py" ] && echo "AVISO: Python não encontrado — nome do app não alterado nos JSONs." && return
   for f in base.json non-dicom-explorer.json dicomizer.json; do
     [ -f "$conf_dir/$f" ] || continue
@@ -412,58 +406,6 @@ _rename_app_in_conf
 # Injetar imagens customizadas (ícone e splash)
 _inject_images
 
-# Renomear app nos arquivos de bundle gerados pelo jpackage
-_patch_app_name() {
-  local NEW_EXE="LabRoM-IML"
-  for app in "$DEST_DIR/dist-output/"*.app; do
-    [ -d "$app" ] || continue
-    local plist="$app/Contents/Info.plist"
-
-    # --- Renomear binário principal (MacOS/<old> → MacOS/LabRoM-IML) ---
-    local old_exe
-    old_exe=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$plist" 2>/dev/null || \
-              basename "$app" .app)
-    if [ "$old_exe" != "$NEW_EXE" ] && [ -f "$app/Contents/MacOS/$old_exe" ]; then
-      mv "$app/Contents/MacOS/$old_exe" "$app/Contents/MacOS/$NEW_EXE"
-      /usr/libexec/PlistBuddy -c "Set :CFBundleExecutable $NEW_EXE" "$plist" 2>/dev/null || true
-      echo "  Binário renomeado: MacOS/$NEW_EXE"
-    fi
-
-    # --- Renomear .cfg (app/<old>.cfg → app/LabRoM-IML.cfg) ---
-    local cfg_old="$app/Contents/app/${old_exe}.cfg"
-    local cfg_new="$app/Contents/app/${NEW_EXE}.cfg"
-    [ -f "$cfg_old" ] && mv "$cfg_old" "$cfg_new"
-
-    # --- Injeta -Dweasis.name no .cfg se ainda não estiver ---
-    if [ -f "$cfg_new" ] && ! grep -q "weasis.name" "$cfg_new"; then
-      sed -i '' 's/^java-options=--enable-native-access=ALL-UNNAMED/java-options=--enable-native-access=ALL-UNNAMED\njava-options=-Dweasis.name=LabRoM_IML/' "$cfg_new"
-    fi
-    echo "  Config: $cfg_new"
-
-    # --- Atualiza CFBundleName e CFBundleDisplayName no Info.plist ---
-    if [ -f "$plist" ]; then
-      /usr/libexec/PlistBuddy -c "Set :CFBundleName LabRoM_IML" "$plist" 2>/dev/null || true
-      /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName LabRoM_IML" "$plist" 2>/dev/null || \
-        /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string LabRoM_IML" "$plist" 2>/dev/null || true
-    fi
-
-    # --- Sincroniza PNGs de resources do bin-dist para dentro do .app ---
-    local img_src="$DEST_DIR/bin-dist/weasis/resources/images"
-    local img_dst="$app/Contents/app/resources/images"
-    if [ -d "$img_src" ] && [ -d "$img_dst" ]; then
-      cp -f "$img_src/logo-button.png"  "$img_dst/" 2>/dev/null || true
-      cp -f "$img_src/about.png"        "$img_dst/" 2>/dev/null || true
-      cp -f "$img_src/about-round.png"  "$img_dst/" 2>/dev/null || true
-    fi
-
-    # --- Re-assina o app após modificações ---
-    chmod -R u+rw "$app" 2>/dev/null || true
-    codesign --force --deep --sign - "$app" 2>/dev/null \
-      && echo "  Assinado: $app" \
-      || echo "  AVISO: codesign falhou para $app"
-  done
-}
-_patch_app_name
 
 # Injetar plugins customizados
 echo "Injetando plugins customizados..."
@@ -483,7 +425,7 @@ fi
 
 echo "Iniciando Weasis..."
 cd "$BIN_DIR"
-java -Xdock:name="LabRoM_IML" \
-     -Xdock:icon="$SCRIPT_DIR/assets/icon.png" \
-     -Dweasis.name="LabRoM_IML" \
-     -cp "weasis-launcher.jar:felix.jar" org.weasis.launcher.AppLauncher
+JAVA_ARGS=(-Dweasis.name="LabRoM_IML" -cp "weasis-launcher.jar:felix.jar")
+[[ "$(uname -s)" == "Darwin" ]] && \
+  JAVA_ARGS=("-Xdock:name=LabRoM_IML" "-Xdock:icon=$SCRIPT_DIR/assets/icon.png" "${JAVA_ARGS[@]}")
+java "${JAVA_ARGS[@]}" org.weasis.launcher.AppLauncher

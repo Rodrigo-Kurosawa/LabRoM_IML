@@ -6,6 +6,7 @@
 # Build Parameters
 REVISON_INC="1"
 PACKAGE=YES
+INSTALLER_ONLY=NO
 
 # Options
 # jdk.localedata => other locale (en_us) data are included in the jdk.localedata
@@ -75,6 +76,10 @@ shift # past value
 ;;
 --no-installer)
 PACKAGE="NO"
+shift # past argument
+;;
+--installer-only)
+INSTALLER_ONLY="YES"
 shift # past argument
 ;;
 --mac-signing-key-user-name)
@@ -221,8 +226,10 @@ if [ "$machine" = "macosx" ] ; then
 fi
 
 # Remove previous package
-if [ -d "${OUTPUT_PATH}" ] ; then
-  rm -rf "${OUTPUT_PATH}"
+if [ "${INSTALLER_ONLY}" != "YES" ] ; then
+  if [ -d "${OUTPUT_PATH}" ] ; then
+    rm -rf "${OUTPUT_PATH}"
+  fi
 fi
 
 if [ -z "$TEMP_PATH" ] ; then
@@ -258,13 +265,15 @@ declare -a commonOptions=("--java-options" "-Dgosh.port=17179" \
 "--java-options" "-Djavax.accessibility.assistive_technologies=org.weasis.launcher.EmptyAccessibilityProvider" \
 "--java-options" "-Djavax.accessibility.screen_magnifier_present=false");
 
-$JPKGCMD --type app-image --input "$INPUT_DIR" --dest "$OUTPUT_PATH" --name "$NAME" \
---main-jar weasis-launcher.jar --main-class org.weasis.launcher.AppLauncher --add-modules "$JDK_MODULES" \
---add-launcher "${DICOMIZER_CONFIG}" --resource-dir "$RES"  --app-version "$WEASIS_CLEAN_VERSION" \
-"${tmpArgs[@]}" --verbose "${signArgs[@]}" "${customOptions[@]}" "${commonOptions[@]}"
+if [ "${INSTALLER_ONLY}" != "YES" ] ; then
+  $JPKGCMD --type app-image --input "$INPUT_DIR" --dest "$OUTPUT_PATH" --name "$NAME" \
+  --main-jar weasis-launcher.jar --main-class org.weasis.launcher.AppLauncher --add-modules "$JDK_MODULES" \
+  --add-launcher "${DICOMIZER_CONFIG}" --resource-dir "$RES"  --app-version "$WEASIS_CLEAN_VERSION" \
+  "${tmpArgs[@]}" --verbose "${signArgs[@]}" "${customOptions[@]}" "${commonOptions[@]}"
 
-if [ "$machine" = "macosx" ] && [[ -n "$CERTIFICATE" ]] ; then
-    codesign --timestamp --entitlements "$RES/uri-launcher.entitlements" --options runtime --force -vvv --sign "$CERTIFICATE" "$RES/$NAME.app"
+  if [ "$machine" = "macosx" ] && [[ -n "$CERTIFICATE" ]] ; then
+      codesign --timestamp --entitlements "$RES/uri-launcher.entitlements" --options runtime --force -vvv --sign "$CERTIFICATE" "$RES/$NAME.app"
+  fi
 fi
 
 if [ "$PACKAGE" = "YES" ] ; then
@@ -278,19 +287,13 @@ if [ "$PACKAGE" = "YES" ] ; then
     --vendor "$VENDOR" --file-associations "${curPath}\file-associations.properties" "${tmpArgs[@]}" --verbose
     mv "$OUTPUT_PATH_UNIX/$NAME-$WEASIS_CLEAN_VERSION.msi" "$OUTPUT_PATH_UNIX/$NAME-$WEASIS_CLEAN_VERSION-${arc}.msi"
   elif [ "$machine" = "linux" ] ; then
-    declare -a installerTypes=("deb" "rpm")
-    for installerType in "${installerTypes[@]}"; do
-      [ "${installerType}" = "rpm" ] && DEPENDENCIES="" || DEPENDENCIES="libstdc++6, libgcc1"
-      $JPKGCMD --type "$installerType" --app-image "$IMAGE_PATH" --dest "$OUTPUT_PATH"  --name "$NAME" --resource-dir "$RES" \
-      --license-file "$INPUT_PATH/Licence.txt" --description "Weasis DICOM viewer" --vendor "$VENDOR" \
-      --copyright "$COPYRIGHT" --app-version "$WEASIS_CLEAN_VERSION" --file-associations "${curPath}/file-associations.properties" \
-      --linux-app-release "$REVISON_INC" --linux-package-name "labrom-iml" --linux-deb-maintainer "LabRoM/IML Team" --linux-rpm-license-type "EPL-2.0" \
-      --linux-menu-group "Viewer;MedicalSoftware;Graphics;" --linux-app-category "science" --linux-package-deps "${DEPENDENCIES}" \
-      --linux-shortcut "${tmpArgs[@]}" --verbose
-      if [ -d "${TEMP_PATH}" ] ; then
-        rm -rf "${TEMP_PATH}"
-      fi
-    done
+    DEPENDENCIES="libstdc++6, libgcc1"
+    $JPKGCMD --type "deb" --app-image "$IMAGE_PATH" --dest "$OUTPUT_PATH"  --name "$NAME" --resource-dir "$RES" \
+    --license-file "$INPUT_PATH/Licence.txt" --description "Weasis DICOM viewer" --vendor "$VENDOR" \
+    --copyright "$COPYRIGHT" --app-version "$WEASIS_CLEAN_VERSION" --file-associations "${curPath}/file-associations.properties" \
+    --linux-app-release "$REVISON_INC" --linux-package-name "labrom-iml" --linux-deb-maintainer "LabRoM/IML Team" \
+    --linux-menu-group "Viewer;MedicalSoftware;Graphics;" --linux-app-category "science" --linux-package-deps "${DEPENDENCIES}" \
+    --linux-shortcut "${tmpArgs[@]}" --verbose
   elif [ "$machine" = "macosx" ] ; then
     $JPKGCMD --type "pkg" --app-image "$IMAGE_PATH.app" --dest "$OUTPUT_PATH" --name "$NAME" --resource-dir "$RES" \
     --license-file "$INPUT_PATH/Licence.txt" --copyright "$COPYRIGHT" --app-version "$WEASIS_CLEAN_VERSION" \
