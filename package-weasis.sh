@@ -14,6 +14,7 @@ INSTALLER_ONLY=NO
 # Base modules for all platforms
 JDK_MODULES_BASE="java.base,java.compiler,java.datatransfer,java.net.http,java.desktop,java.logging,java.management,java.prefs,java.xml,jdk.localedata,jdk.charsets,jdk.crypto.ec,jdk.crypto.cryptoki,jdk.jdwp.agent,java.sql"
 NAME="LabRoM_IML"
+NAME_LINUX="labrom-iml"   # jpackage/dpkg-deb exige nome minúsculo sem underscores no Linux
 IDENTIFIER="org.weasis.launcher"
 
 # Aux functions:
@@ -200,6 +201,9 @@ fi
 if [ "$machine" = "windows" ] ; then
   INPUT_DIR="$INPUT_PATH\weasis"
   IMAGE_PATH="$OUTPUT_PATH\\${NAME}"
+elif [ "$machine" = "linux" ] ; then
+  IMAGE_PATH="$OUTPUT_PATH/$NAME_LINUX"
+  INPUT_DIR="$INPUT_PATH_UNIX/weasis"
 else
   IMAGE_PATH="$OUTPUT_PATH/$NAME"
   INPUT_DIR="$INPUT_PATH_UNIX/weasis"
@@ -265,8 +269,11 @@ declare -a commonOptions=("--java-options" "-Dgosh.port=17179" \
 "--java-options" "-Djavax.accessibility.assistive_technologies=org.weasis.launcher.EmptyAccessibilityProvider" \
 "--java-options" "-Djavax.accessibility.screen_magnifier_present=false");
 
+APP_IMAGE_NAME="$NAME"
+[ "$machine" = "linux" ] && APP_IMAGE_NAME="$NAME_LINUX"
+
 if [ "${INSTALLER_ONLY}" != "YES" ] ; then
-  $JPKGCMD --type app-image --input "$INPUT_DIR" --dest "$OUTPUT_PATH" --name "$NAME" \
+  $JPKGCMD --type app-image --input "$INPUT_DIR" --dest "$OUTPUT_PATH" --name "$APP_IMAGE_NAME" \
   --main-jar weasis-launcher.jar --main-class org.weasis.launcher.AppLauncher --add-modules "$JDK_MODULES" \
   --add-launcher "${DICOMIZER_CONFIG}" --resource-dir "$RES"  --app-version "$WEASIS_CLEAN_VERSION" \
   "${tmpArgs[@]}" --verbose "${signArgs[@]}" "${customOptions[@]}" "${commonOptions[@]}"
@@ -287,13 +294,19 @@ if [ "$PACKAGE" = "YES" ] ; then
     --vendor "$VENDOR" --file-associations "${curPath}\file-associations.properties" "${tmpArgs[@]}" --verbose
     mv "$OUTPUT_PATH_UNIX/$NAME-$WEASIS_CLEAN_VERSION.msi" "$OUTPUT_PATH_UNIX/$NAME-$WEASIS_CLEAN_VERSION-${arc}.msi"
   elif [ "$machine" = "linux" ] ; then
-    DEPENDENCIES="libstdc++6, libgcc1"
-    $JPKGCMD --type "deb" --app-image "$IMAGE_PATH" --dest "$OUTPUT_PATH"  --name "$NAME" --resource-dir "$RES" \
-    --license-file "$INPUT_PATH/Licence.txt" --description "Weasis DICOM viewer" --vendor "$VENDOR" \
-    --copyright "$COPYRIGHT" --app-version "$WEASIS_CLEAN_VERSION" --file-associations "${curPath}/file-associations.properties" \
-    --linux-app-release "$REVISON_INC" --linux-package-name "labrom-iml" --linux-deb-maintainer "LabRoM/IML Team" \
-    --linux-menu-group "Viewer;MedicalSoftware;Graphics;" --linux-app-category "science" --linux-package-deps "${DEPENDENCIES}" \
-    --linux-shortcut "${tmpArgs[@]}" --verbose
+    declare -a installerTypes=("deb" "rpm")
+    for installerType in "${installerTypes[@]}"; do
+      [ "${installerType}" = "rpm" ] && DEPENDENCIES="" || DEPENDENCIES="libstdc++6, libgcc1"
+      $JPKGCMD --type "$installerType" --app-image "$IMAGE_PATH" --dest "$OUTPUT_PATH" --name "$NAME_LINUX" --resource-dir "$RES" \
+      --license-file "$INPUT_PATH/Licence.txt" --description "LabRoM/IML DICOM viewer" --vendor "$VENDOR" \
+      --copyright "$COPYRIGHT" --app-version "$WEASIS_CLEAN_VERSION" --file-associations "${curPath}/file-associations.properties" \
+      --linux-app-release "$REVISON_INC" --linux-package-name "labrom-iml" --linux-deb-maintainer "LabRoM/IML Team" --linux-rpm-license-type "EPL-2.0" \
+      --linux-menu-group "Viewer;MedicalSoftware;Graphics;" --linux-app-category "science" --linux-package-deps "${DEPENDENCIES}" \
+      --linux-shortcut "${tmpArgs[@]}" --verbose
+      if [ -d "${TEMP_PATH}" ] ; then
+        rm -rf "${TEMP_PATH}"
+      fi
+    done
   elif [ "$machine" = "macosx" ] ; then
     $JPKGCMD --type "pkg" --app-image "$IMAGE_PATH.app" --dest "$OUTPUT_PATH" --name "$NAME" --resource-dir "$RES" \
     --license-file "$INPUT_PATH/Licence.txt" --copyright "$COPYRIGHT" --app-version "$WEASIS_CLEAN_VERSION" \
