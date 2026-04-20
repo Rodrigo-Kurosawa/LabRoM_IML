@@ -302,7 +302,8 @@ _setup_python() {
   "$python_cmd" -m venv "$venv_dir" --clear
   "$venv_dir/bin/pip" install --upgrade pip --quiet
   "$venv_dir/bin/pip" install \
-    ultralytics torch torchvision opencv-python pydicom pillow grad-cam --quiet
+    ultralytics torch torchvision opencv-python pydicom pillow grad-cam \
+    pylibjpeg pylibjpeg-openjpeg pylibjpeg-rle --quiet
   echo "Ambiente Python configurado com sucesso em: $venv_dir"
 }
 
