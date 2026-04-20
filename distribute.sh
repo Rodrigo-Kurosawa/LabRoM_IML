@@ -213,8 +213,15 @@ _setup_python_venv() {
   local venv_dir="$1"
   local python_cmd=""
 
-  # Procura Python 3.9+
-  for candidate in python3 python3.12 python3.11 python3.10 python3.9 python; do
+  # No Linux, preferir python3.12 para compatibilidade com Ubuntu 24.04 LTS (alvo principal).
+  # Python 3.13+ requer libpython3.13.so no destino — Ubuntu 24.04 não tem essa versão.
+  if [[ "$(uname -s)" = "Linux" ]]; then
+    _PY_CANDIDATES="python3.12 python3.11 python3.10 python3.9 python3 python"
+  else
+    _PY_CANDIDATES="python3 python3.12 python3.11 python3.10 python3.9 python"
+  fi
+
+  for candidate in $_PY_CANDIDATES; do
     if command -v "$candidate" &>/dev/null; then
       local ver
       ver=$("$candidate" -c \
@@ -231,6 +238,16 @@ _setup_python_venv() {
     warn "O ambiente Python NÃO será embutido na distribuição."
     warn "Execute './setup-python.sh' no PC de destino antes de usar o plugin."
     return 0
+  fi
+
+  # Avisa se não for 3.12 no Linux (pode não funcionar no Ubuntu 24.04)
+  local py_minor
+  py_minor=$("$python_cmd" -c "import sys; print(sys.version_info.minor)" 2>/dev/null)
+  local py_major
+  py_major=$("$python_cmd" -c "import sys; print(sys.version_info.major)" 2>/dev/null)
+  if [[ "$(uname -s)" = "Linux" && "${py_major:-0}" -eq 3 && "${py_minor:-0}" -gt 12 ]]; then
+    warn "Python ${py_major}.${py_minor} detectado. Ubuntu 24.04 não tem libpython${py_major}.${py_minor}."
+    warn "Instale python3.12 no build: sudo apt install python3.12 python3.12-venv"
   fi
 
   info "Criando venv isolado em: weasis/python-env/  (aguarde — instala PyTorch et al.)"
@@ -444,6 +461,36 @@ case "$TARGET_PLATFORM" in
             info "Reempacotando .deb com o venv Python..."
             dpkg-deb -R "$_DEB_FILE" "$_REPACK_DIR"
             cp -Rf "$_VENV_TMP" "$_REPACK_DIR/opt/labrom-iml/lib/app/python-env"
+
+            # ── Tornar o venv relocatável para o PC de destino ──────────────
+            _VENV_IN_DEB="$_REPACK_DIR/opt/labrom-iml/lib/app/python-env"
+
+            # Detecta versão do Python no venv (ex: "python3.12")
+            _PY_VER_DIR=$(ls "$_VENV_IN_DEB/lib/" 2>/dev/null | head -1)
+            _PY_SHORTVER="${_PY_VER_DIR#python}"   # "3.12"
+
+            # Corrige pyvenv.cfg para apontar para o Python do sistema de destino
+            _PYVENV_CFG="$_VENV_IN_DEB/pyvenv.cfg"
+            if [[ -f "$_PYVENV_CFG" && -n "$_PY_SHORTVER" ]]; then
+              sed -i "s|^home = .*|home = /usr/bin|"                               "$_PYVENV_CFG"
+              sed -i "s|^base-executable = .*|base-executable = /usr/bin/python${_PY_SHORTVER}|" "$_PYVENV_CFG"
+              sed -i "s|^base-prefix = .*|base-prefix = /usr|"                     "$_PYVENV_CFG"
+              sed -i "s|^base-exec-prefix = .*|base-exec-prefix = /usr|"           "$_PYVENV_CFG"
+              info "pyvenv.cfg → /usr/bin/python${_PY_SHORTVER}"
+            fi
+
+            # Desabilita torch.compile/_inductor (requer ferramentas GPU/CUDA ausentes na maioria dos PCs)
+            _SITE_PKG="$_VENV_IN_DEB/lib/${_PY_VER_DIR}/site-packages"
+            if [[ -d "$_SITE_PKG" ]]; then
+              cat > "$_SITE_PKG/sitecustomize.py" << 'SITECUSTOMIZE'
+import os
+# Disable PyTorch JIT/compile backend — requires GPU compiler tools not available on all systems
+os.environ.setdefault("TORCH_COMPILE_DISABLE", "1")
+os.environ.setdefault("TORCHDYNAMO_DISABLE", "1")
+SITECUSTOMIZE
+              info "sitecustomize.py → desabilita torch.compile"
+            fi
+
             fakeroot dpkg-deb -b "$_REPACK_DIR" "$_DEB_FILE"
             rm -rf "$_REPACK_DIR"
             success "Venv reinjetado no .deb"
