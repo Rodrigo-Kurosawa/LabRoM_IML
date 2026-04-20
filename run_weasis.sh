@@ -271,10 +271,20 @@ _copy_models() {
 # ---------------------------------------------------------------------------
 _setup_python() {
   local venv_dir="$HOME/.weasis/labrom-env"
+  local pip_bin="$venv_dir/bin/pip"
 
-  if [ -x "$venv_dir/bin/python3" ]; then
+  # Required packages — if any are missing, (re)install all
+  local _needs_install=0
+  if [ ! -x "$venv_dir/bin/python3" ]; then
+    _needs_install=1
+  elif ! "$venv_dir/bin/python3" -c "import pydicom, PIL, pylibjpeg" 2>/dev/null; then
+    echo "Pacotes Python faltando no venv existente. Atualizando..."
+    _needs_install=1
+  fi
+
+  if [ "$_needs_install" -eq 0 ]; then
     echo "Venv Python OK: $venv_dir"
-    return
+    return 0
   fi
 
   # Procura Python 3.9+
@@ -294,17 +304,28 @@ _setup_python() {
   if [ -z "$python_cmd" ]; then
     echo "AVISO: Python 3.9+ não encontrado — o plugin de classificação não funcionará."
     echo "       Instale Python 3.9+ e execute este script novamente."
-    return
+    return 0
   fi
 
-  echo "Criando ambiente Python em $venv_dir (pode levar alguns minutos)..."
+  echo "Configurando ambiente Python em $venv_dir (pode levar alguns minutos)..."
   mkdir -p "$(dirname "$venv_dir")"
+  # set +e so pip failure doesn't abort the whole script
+  set +e
   "$python_cmd" -m venv "$venv_dir" --clear
-  "$venv_dir/bin/pip" install --upgrade pip --quiet
-  "$venv_dir/bin/pip" install \
+  "$pip_bin" install --upgrade pip --quiet
+  "$pip_bin" install \
     ultralytics torch torchvision opencv-python pydicom pillow grad-cam \
     pylibjpeg pylibjpeg-openjpeg pylibjpeg-rle --quiet
-  echo "Ambiente Python configurado com sucesso em: $venv_dir"
+  local pip_exit=$?
+  set -e
+  if [ $pip_exit -ne 0 ]; then
+    echo "AVISO: pip install retornou erro ($pip_exit). Alguns pacotes podem estar faltando."
+    echo "       O Weasis ainda será iniciado, mas a classificação pode não funcionar."
+    echo "       Para corrigir: $pip_bin install pydicom pillow pylibjpeg pylibjpeg-openjpeg pylibjpeg-rle"
+  else
+    echo "Ambiente Python configurado com sucesso em: $venv_dir"
+  fi
+  return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -338,9 +359,16 @@ if [[ "$1" == "--fast" ]]; then
   echo "[FAST] Cache OSGi limpo. Iniciando Weasis..."
   cd "$BIN_DIR"
   JAVA_ARGS=(-Dweasis.name="LabRoM_IML" -cp "weasis-launcher.jar:felix.jar")
-  [[ "$(uname -s)" == "Darwin" ]] && \
+  if [[ "$(uname -s)" == "Darwin" ]]; then
     JAVA_ARGS=("-Xdock:name=LabRoM_IML" "-Xdock:icon=$SCRIPT_DIR/assets/icon.png" "${JAVA_ARGS[@]}")
+  elif [[ "$(uname -s)" == "Linux" ]] && [ -z "$DISPLAY" ] && [ -z "$WAYLAND_DISPLAY" ]; then
+    export DISPLAY=":0"
+  fi
+  set +e
   java "${JAVA_ARGS[@]}" org.weasis.launcher.AppLauncher
+  JAVA_EXIT=$?
+  set -e
+  [ $JAVA_EXIT -ne 0 ] && echo "Weasis encerrou com código $JAVA_EXIT."
   exit 0
 fi
 
@@ -427,6 +455,23 @@ fi
 echo "Iniciando Weasis..."
 cd "$BIN_DIR"
 JAVA_ARGS=(-Dweasis.name="LabRoM_IML" -cp "weasis-launcher.jar:felix.jar")
-[[ "$(uname -s)" == "Darwin" ]] && \
+if [[ "$(uname -s)" == "Darwin" ]]; then
   JAVA_ARGS=("-Xdock:name=LabRoM_IML" "-Xdock:icon=$SCRIPT_DIR/assets/icon.png" "${JAVA_ARGS[@]}")
+elif [[ "$(uname -s)" == "Linux" ]]; then
+  # Ensure DISPLAY is set for headful Java on Linux
+  if [ -z "$DISPLAY" ] && [ -z "$WAYLAND_DISPLAY" ]; then
+    export DISPLAY=":0"
+    echo "AVISO: DISPLAY não estava definido, usando :0"
+  fi
+fi
+set +e
 java "${JAVA_ARGS[@]}" org.weasis.launcher.AppLauncher
+JAVA_EXIT=$?
+set -e
+if [ $JAVA_EXIT -ne 0 ]; then
+  echo ""
+  echo "AVISO: Weasis encerrou com código $JAVA_EXIT."
+  echo "  Se o app não abriu, verifique:"
+  echo "  1. Variável DISPLAY: echo \$DISPLAY"
+  echo "  2. Rode manualmente: cd $BIN_DIR && java ${JAVA_ARGS[*]} org.weasis.launcher.AppLauncher"
+fi
