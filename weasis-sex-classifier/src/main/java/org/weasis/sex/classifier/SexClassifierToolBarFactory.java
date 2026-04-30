@@ -26,7 +26,10 @@ import org.weasis.core.api.gui.InsertableFactory;
  */
 @org.osgi.service.component.annotations.Component(
     service = InsertableFactory.class,
-    property = {"org.weasis.dicom.viewer2d.View2dContainer=true"})
+    property = {
+        "org.weasis.dicom.viewer2d.View2dContainer=true",
+        "org.weasis.base.viewer2d.View2dContainer=true"
+    })
 public class SexClassifierToolBarFactory implements InsertableFactory {
 
   private static final Logger LOGGER =

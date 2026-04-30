@@ -367,25 +367,46 @@ setup_labrom() {
     return 0
   fi
 
-  # 1. Compilar plugin (se o JAR ainda não existir)
+  # 1. Compilar módulos customizados (sempre — garante que as últimas mudanças estão no app)
+  local mvn_cmd
+  mvn_cmd=$(find "$HOME/tools" -maxdepth 3 -name "mvn" -path "*/apache-maven-*/bin/mvn" \
+    2>/dev/null | sort -V | tail -n 1)
+  [[ -z "$mvn_cmd" ]] && mvn_cmd=$(command -v mvn 2>/dev/null || true)
+
+  if [[ -n "$mvn_cmd" ]]; then
+    info "Compilando módulos customizados com Maven..."
+    if (cd "$LABROM_DIR" && JAVA_HOME="$JDK_PATH" "$mvn_cmd" install \
+        -pl weasis-base/weasis-base-viewer2d,weasis-sex-classifier \
+        -DskipTests -q 2>&1); then
+      success "Compilação concluída."
+    else
+      warn "mvn install falhou — usando JARs pré-compilados de bin-dist se disponíveis."
+    fi
+  else
+    warn "Maven não encontrado — usando JARs pré-compilados de bin-dist."
+  fi
+
   local jar_src
   jar_src=$(find "$SEX_CLASSIFIER_DIR/target" \
     -name "weasis-sex-classifier-*.jar" ! -name "*-sources.jar" 2>/dev/null | head -1)
-
-  if [[ -z "$jar_src" ]]; then
-    info "JAR não encontrado — compilando com mvn package..."
-    (cd "$SEX_CLASSIFIER_DIR" && \
-      JAVA_HOME="$JDK_PATH" mvn package -DskipTests -q 2>&1) \
-      || warn "mvn package falhou. Certifique-se de ter o JAR em target/ antes de distribuir."
-    jar_src=$(find "$SEX_CLASSIFIER_DIR/target" \
-      -name "weasis-sex-classifier-*.jar" ! -name "*-sources.jar" 2>/dev/null | head -1)
-  fi
 
   if [[ -n "$jar_src" ]]; then
     cp -f "$jar_src" "$BIN_DIST/weasis/bundle/"
     success "Plugin JAR → bundle/  ($(basename "$jar_src"))"
   else
-    warn "JAR não encontrado. Distribua manualmente depois de compilar."
+    warn "JAR do sex-classifier não encontrado. O bundle existente em bin-dist será usado."
+  fi
+
+  # Injetar base viewer customizado (BEST_FIT zoom por padrão)
+  local base_viewer_jar
+  base_viewer_jar=$(find "$LABROM_DIR/weasis-base/weasis-base-viewer2d/target" \
+    -name "weasis-base-viewer2d-*.jar" ! -name "*-sources.jar" ! -name "*-javadoc.jar" \
+    2>/dev/null | head -1)
+  if [[ -n "$base_viewer_jar" ]]; then
+    cp -f "$base_viewer_jar" "$BIN_DIST/weasis/bundle/"
+    success "Base viewer JAR → bundle/  ($(basename "$base_viewer_jar"))"
+  else
+    warn "JAR do base viewer não encontrado. O bundle existente em bin-dist será usado."
   fi
 
   # 2. Copiar modelos (.pt) → bin-dist/weasis/models/
@@ -409,6 +430,22 @@ setup_labrom() {
 
   # 4. Gerar scripts de setup para PCs que precisem recriar o venv manualmente
   _create_setup_scripts
+
+  # 5. Limpar caches do Felix OSGi (exceto cache-local do dev) para garantir
+  #    que o próximo lançamento do app use os JARs atualizados do bundle.
+  local weasis_cache_dir="$HOME/.weasis"
+  if [[ -d "$weasis_cache_dir" ]]; then
+    local _cleared=0
+    for _cache_d in "$weasis_cache_dir"/cache-*; do
+      [[ -d "$_cache_d" ]] || continue
+      [[ "$(basename "$_cache_d")" == "cache-local" ]] && continue
+      rm -rf "$_cache_d"
+      ((_cleared++)) || true
+    done
+    if ((_cleared > 0)); then
+      info "Cache Felix OSGi limpo ($_cleared diretório(s)) — app usará JARs atualizados no próximo lançamento."
+    fi
+  fi
 }
 
 # ─── Execução principal ───────────────────────────────────────────────────────
@@ -430,6 +467,24 @@ case "$TARGET_PLATFORM" in
     build_native
     _install_venv_in_app "$(_app_dir_in_image macosx "$OUTPUT_PATH")"
     success "Instalador macOS (.pkg) gerado em: ${OUTPUT_PATH}"
+
+    # Se o app já está instalado em /Applications, reinstalar o .pkg automaticamente
+    # para que o app instalado receba os JARs atualizados (base-viewer2d + sex-classifier).
+    # Sem isso, o usuário abre o app antigo de /Applications e o Felix usa os JARs desatualizados.
+    _pkg_file=$(ls "${OUTPUT_PATH}"/*.pkg 2>/dev/null | head -1)
+    if [[ -n "$_pkg_file" && -d "/Applications/LabRoM_IML.app" ]]; then
+      info "App instalado detectado — reinstalando o .pkg para atualizar /Applications/LabRoM_IML.app ..."
+      if sudo installer -pkg "$_pkg_file" -target / 2>&1; then
+        rm -rf ~/.weasis/cache-D264E300 2>/dev/null || true
+        success "App reinstalado com sucesso. Cache Felix limpo."
+      else
+        warn "Reinstalação falhou. Execute manualmente:"
+        warn "  sudo installer -pkg \"$_pkg_file\" -target /"
+      fi
+    elif [[ -n "$_pkg_file" ]]; then
+      info "Para instalar o app, execute:"
+      info "  sudo installer -pkg \"$_pkg_file\" -target /"
+    fi
     ;;
 
   linux)

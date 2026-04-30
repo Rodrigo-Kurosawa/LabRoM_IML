@@ -51,6 +51,13 @@
       <version>${project.parent.version}</version>
       <scope>provided</scope>
     </dependency>
+    <!-- Base Viewer2d – registers toolbar/tool in the generic image viewer too -->
+    <dependency>
+      <groupId>org.weasis.base</groupId>
+      <artifactId>weasis-base-viewer2d</artifactId>
+      <version>${project.parent.version}</version>
+      <scope>provided</scope>
+    </dependency>
     <!-- DICOM codec – to read DICOM tags -->
     <dependency>
       <groupId>org.weasis.dicom</groupId>

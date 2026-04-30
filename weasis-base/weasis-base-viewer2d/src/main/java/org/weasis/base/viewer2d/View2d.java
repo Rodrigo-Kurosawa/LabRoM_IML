@@ -135,7 +135,7 @@ public class View2d extends DefaultView2d<ImageElement> {
   protected void initActionWState() {
     super.initActionWState();
     actionsInView.put(ActionW.ZOOM.cmd(), -1.0);
-    actionsInView.put(ViewCanvas.ZOOM_TYPE_CMD, ZoomType.PIXEL_SIZE);
+    actionsInView.put(ViewCanvas.ZOOM_TYPE_CMD, ZoomType.BEST_FIT);
   }
 
   @Override

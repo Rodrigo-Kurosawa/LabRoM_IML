@@ -202,6 +202,28 @@ public final class SexClassifierAction {
         BufferedImage pivot = toRgb(ImageIO.read(pivotFile));
         if (pivot == null) continue;
 
+        // ── Normalise pivot so the composite fits any viewer at 1:1 zoom ──
+        // Target: each half (pivot + heatmap) should be at most TARGET_HALF_W px wide
+        // so the full composite ≤ TARGET_HALF_W*2 px, readable without zooming.
+        // We keep the aspect ratio and scale the body down if needed.
+        final int TARGET_HALF_W = 700; // px — each image side in the composite
+        if (pivot.getWidth() > TARGET_HALF_W || pivot.getHeight() > TARGET_HALF_W * 2) {
+          double scW = (double) TARGET_HALF_W / pivot.getWidth();
+          double scH = (double) (TARGET_HALF_W * 2) / pivot.getHeight();
+          double sc  = Math.min(scW, scH);
+          int nw = Math.max(1, (int) Math.round(pivot.getWidth()  * sc));
+          int nh = Math.max(1, (int) Math.round(pivot.getHeight() * sc));
+          BufferedImage scaled = new BufferedImage(nw, nh, BufferedImage.TYPE_INT_RGB);
+          Graphics2D gsc = scaled.createGraphics();
+          gsc.setRenderingHint(RenderingHints.KEY_INTERPOLATION,
+              RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+          gsc.setRenderingHint(RenderingHints.KEY_RENDERING,
+              RenderingHints.VALUE_RENDER_QUALITY);
+          gsc.drawImage(pivot, 0, 0, nw, nh, null);
+          gsc.dispose();
+          pivot = scaled;
+        }
+
         int bodyH  = pivot.getHeight();
         int pivotW = pivot.getWidth();
 
@@ -316,6 +338,26 @@ public final class SexClassifierAction {
         }
 
         g.dispose();
+
+        // Scale down so the composite fits a typical viewer window width without
+        // requiring manual zoom. Images wider than MAX_W are downsampled while
+        // preserving aspect ratio; smaller images are written as-is.
+        final int MAX_W = 1920;
+        if (composite.getWidth() > MAX_W) {
+          double sc = (double) MAX_W / composite.getWidth();
+          int sw = MAX_W;
+          int sh = (int) Math.round(composite.getHeight() * sc);
+          BufferedImage scaled = new BufferedImage(sw, sh, BufferedImage.TYPE_INT_RGB);
+          Graphics2D gs = scaled.createGraphics();
+          gs.setRenderingHint(RenderingHints.KEY_INTERPOLATION,
+              RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+          gs.setRenderingHint(RenderingHints.KEY_RENDERING,
+              RenderingHints.VALUE_RENDER_QUALITY);
+          gs.drawImage(composite, 0, 0, sw, sh, null);
+          gs.dispose();
+          composite = scaled;
+        }
+
         ImageIO.write(composite, "png", dest);
         composites.add(dest);
 

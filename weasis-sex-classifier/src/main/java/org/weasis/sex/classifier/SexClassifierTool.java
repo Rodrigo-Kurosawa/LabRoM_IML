@@ -40,6 +40,9 @@ import org.weasis.core.api.media.data.MediaReader;
 import org.weasis.core.api.media.data.MediaSeries;
 import org.weasis.core.ui.docking.PluginTool;
 import org.weasis.core.ui.editor.ViewerPluginBuilder;
+import org.weasis.core.ui.editor.image.DefaultView2d;
+import org.weasis.core.ui.editor.image.ViewCanvas;
+import org.weasis.dicom.viewer2d.EventManager;
 
 public class SexClassifierTool extends PluginTool {
 
@@ -248,6 +251,25 @@ public class SexClassifierTool extends PluginTool {
       return;
     }
 
+    // Prefer composite frames (what the user sees in the viewer); fall back to raw heatmaps.
+    List<File> toExport = (result.composites != null && !result.composites.isEmpty())
+        ? result.composites
+        : null;
+    if (toExport == null) {
+      // Build a list from per-image raw heatmaps as last resort
+      toExport = new java.util.ArrayList<>();
+      for (SexClassifier.ImageResult r : result.classification.perImage) {
+        if (r.heatmap != null && r.heatmap.exists()) toExport.add(r.heatmap);
+      }
+    }
+    if (toExport.isEmpty()) {
+      JOptionPane.showMessageDialog(mainPanel,
+          "No frames available to export.\n"
+          + "Heatmaps are only generated when grad-cam is installed.",
+          "Export Heatmap", JOptionPane.WARNING_MESSAGE);
+      return;
+    }
+
     JFileChooser chooser = new JFileChooser();
     chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
     chooser.setDialogTitle("Select base directory for export");
@@ -265,27 +287,27 @@ public class SexClassifierTool extends PluginTool {
     outDir.mkdirs();
 
     int count = 0;
-    for (SexClassifier.ImageResult r : result.classification.perImage) {
-      if (r.heatmap != null && r.heatmap.exists()) {
-        try {
-          Files.copy(r.heatmap.toPath(),
-              new File(outDir, r.heatmap.getName()).toPath(),
-              StandardCopyOption.REPLACE_EXISTING);
-          count++;
-        } catch (Exception e) {
-          LOGGER.warn("Could not copy heatmap {}: {}", r.heatmap.getName(), e.getMessage());
-        }
+    for (int i = 0; i < toExport.size(); i++) {
+      File src = toExport.get(i);
+      if (src == null || !src.exists()) continue;
+      try {
+        String name = String.format("frame_%04d.png", i + 1);
+        Files.copy(src.toPath(),
+            new File(outDir, name).toPath(),
+            StandardCopyOption.REPLACE_EXISTING);
+        count++;
+      } catch (Exception e) {
+        LOGGER.warn("Could not copy frame {}: {}", src.getName(), e.getMessage());
       }
     }
 
     if (count > 0) {
       JOptionPane.showMessageDialog(mainPanel,
-          count + " heatmap(s) exported to:\n" + outDir.getAbsolutePath(),
+          count + " frame(s) exportado(s) para:\n" + outDir.getAbsolutePath(),
           "Export Heatmap", JOptionPane.INFORMATION_MESSAGE);
     } else {
       JOptionPane.showMessageDialog(mainPanel,
-          "No heatmaps available.\n"
-          + "Heatmaps are only generated when grad-cam is installed.",
+          "Nenhum frame exportado. Verifique se os arquivos temporários ainda existem.",
           "Export Heatmap", JOptionPane.WARNING_MESSAGE);
     }
   }
@@ -314,9 +336,80 @@ public class SexClassifierTool extends PluginTool {
       }
       ViewerPluginBuilder.openSequenceInDefaultPlugin(
           series, ViewerPluginBuilder.DefaultDataModel, true, true);
+
+      // Fit the composite to the viewer window.
+      // We pass the first image URI so the retry loop can verify the view is actually
+      // showing OUR new series — not the previously loaded DICOM — before applying zoom.
+      java.net.URI firstUri = images.get(0).toURI();
+      scheduleFitToWindow(firstUri, 0);
+
     } catch (Exception e) {
       LOGGER.warn("Cannot open images in viewer: {}", e.getMessage());
     }
+  }
+
+  // ── Zoom fit ──────────────────────────────────────────────────────────────
+
+  @SuppressWarnings({"rawtypes", "unchecked"})
+  private static void scheduleFitToWindow(java.net.URI expectedUri, int attempt) {
+    if (attempt >= 30) return; // give up after 3 s
+    javax.swing.Timer t = new javax.swing.Timer(100, ev -> {
+      // Try both EventManagers: the DICOM viewer and the base image viewer.
+      // When running via run_weasis.sh the composite opens inside the DICOM viewer container;
+      // when running the jpackage app (distribute.sh) the composite opens in the base viewer
+      // container — each has its own separate singleton EventManager.
+      ViewCanvas<?> raw = findViewWithUri(expectedUri);
+      if (raw instanceof DefaultView2d) {
+        DefaultView2d dv = (DefaultView2d) raw;
+        double scale = dv.getBestFitViewScale();
+        if (scale > 0) { dv.zoom(scale); return; }
+      }
+      scheduleFitToWindow(expectedUri, attempt + 1);
+    });
+    t.setRepeats(false);
+    t.start();
+  }
+
+  private static boolean sameFile(java.net.URI a, java.net.URI b) {
+    if (a.equals(b)) return true;
+    try {
+      return new java.io.File(a).getCanonicalFile().equals(new java.io.File(b).getCanonicalFile());
+    } catch (Exception ignored) { return false; }
+  }
+
+  @SuppressWarnings({"unchecked", "rawtypes"})
+  private static ViewCanvas<?> findViewWithUri(java.net.URI expectedUri) {
+    // Scan ALL open viewer plugins and ALL their view panels.
+    // This is robust regardless of which EventManager or container is "selected".
+    // sameFile() resolves symlinks (e.g. macOS /tmp → /private/tmp) so URI equality works.
+    try {
+      java.util.List<org.weasis.core.ui.editor.image.ViewerPlugin<?>> plugins =
+          org.weasis.core.api.gui.util.GuiUtils.getUICore().getViewerPlugins();
+      if (plugins != null) {
+        synchronized (plugins) {
+          for (org.weasis.core.ui.editor.image.ViewerPlugin<?> plugin : plugins) {
+            if (plugin instanceof org.weasis.core.ui.editor.image.ImageViewerPlugin) {
+              org.weasis.core.ui.editor.image.ImageViewerPlugin ivp =
+                  (org.weasis.core.ui.editor.image.ImageViewerPlugin) plugin;
+              java.util.List<ViewCanvas> panels = ivp.getImagePanels();
+              if (panels == null) continue;
+              for (ViewCanvas vc : panels) {
+                if (!vc.hasValidContent()) continue;
+                MediaSeries<?> s = vc.getSeries();
+                if (s == null) continue;
+                for (Object m : s.getMedias(null, null)) {
+                  if (m instanceof MediaElement) {
+                    java.net.URI uri = ((MediaElement) m).getMediaURI();
+                    if (uri != null && sameFile(expectedUri, uri)) return vc;
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    } catch (Exception ignored) {}
+    return null;
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────

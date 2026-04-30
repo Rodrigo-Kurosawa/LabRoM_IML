@@ -332,14 +332,16 @@ _setup_python() {
 # Modo --fast: recompila só o plugin e reinicia o Weasis
 # ---------------------------------------------------------------------------
 if [[ "$1" == "--fast" ]]; then
-  echo "[FAST] Compilando plugin weasis-sex-classifier..."
+  echo "[FAST] Compilando módulos customizados..."
   cd "$SCRIPT_DIR"
-  "$MVN" install -pl weasis-sex-classifier -DskipTests -q
+  "$MVN" install -pl weasis-base/weasis-base-viewer2d,weasis-sex-classifier -DskipTests -q
 
   JAR=$(ls "$SCRIPT_DIR/weasis-sex-classifier/target/weasis-sex-classifier-"*.jar \
         2>/dev/null | head -n 1)
+  BASE_JAR=$(ls "$SCRIPT_DIR/weasis-base/weasis-base-viewer2d/target/weasis-base-viewer2d-"*.jar \
+        2>/dev/null | grep -v sources | grep -v javadoc | head -n 1)
   if [ -z "$JAR" ]; then
-    echo "ERRO: JAR não encontrado após compilação."
+    echo "ERRO: JAR do plugin não encontrado após compilação."
     exit 1
   fi
 
@@ -350,7 +352,10 @@ if [[ "$1" == "--fast" ]]; then
   fi
 
   cp "$JAR" "$BUNDLE_DIR/"
-  echo "[FAST] Plugin injetado: $(basename "$JAR")"
+  echo "[FAST] Plugin injetado em bin-dist: $(basename "$JAR")"
+  [ -n "$BASE_JAR" ] && cp "$BASE_JAR" "$BUNDLE_DIR/" && \
+    echo "[FAST] Base viewer injetado em bin-dist: $(basename "$BASE_JAR")"
+  echo "[FAST] Para gerar o instalador atualizado, rode: ./distribute.sh"
 
   _copy_models
   _setup_python
@@ -380,33 +385,6 @@ echo "Iniciando build do Weasis..."
 # Mata instâncias anteriores
 pkill -f "weasis-launcher" 2>/dev/null && echo "Processo Weasis anterior encerrado." || true
 
-cd "$SCRIPT_DIR"
-"$MVN" clean install -DskipTests
-
-echo "Build concluído. Empacotando distribuição..."
-
-cd weasis-distributions
-"$MVN" package -DskipTests
-
-ZIP_FILE=$(find . -name "weasis-native*.zip" | head -n 1)
-if [ -z "$ZIP_FILE" ]; then
-  echo "ERRO: ZIP do weasis-native não encontrado!"
-  exit 1
-fi
-echo "Encontrado: $ZIP_FILE"
-
-rm -rf "$DEST_DIR"
-mkdir -p "$DEST_DIR"
-unzip "$ZIP_FILE" -d "$DEST_DIR"
-echo "Extraído para $DEST_DIR"
-
-# Copiar scripts de distribuição para weasis-native
-[ -f "$SCRIPT_DIR/distribute.sh" ] && cp "$SCRIPT_DIR/distribute.sh" "$DEST_DIR/" \
-  && echo "  Copiado: distribute.sh"
-[ -f "$SCRIPT_DIR/package-weasis.sh" ] && cp "$SCRIPT_DIR/package-weasis.sh" "$DEST_DIR/build/script/package-weasis.sh" \
-  && echo "  Copiado: package-weasis.sh -> build/script/"
-
-# Renomear aplicação nos JSONs de configuração
 _rename_app_in_conf() {
   local conf_dir="$DEST_DIR/bin-dist/weasis/conf"
   local py
@@ -430,25 +408,85 @@ PYEOF
     echo "  Nome atualizado: $f"
   done
 }
-_rename_app_in_conf
 
-# Injetar imagens customizadas (ícone e splash)
-_inject_images
+_do_full_build() {
+  cd "$SCRIPT_DIR"
+  "$MVN" clean install -DskipTests || return 1
 
+  echo "Build concluído. Empacotando distribuição..."
+  cd weasis-distributions
+  "$MVN" package -DskipTests || return 1
 
-# Injetar plugins customizados
-echo "Injetando plugins customizados..."
+  local zip_file
+  zip_file=$(find . -name "weasis-native*.zip" | head -n 1)
+  if [ -z "$zip_file" ]; then
+    echo "ERRO: ZIP do weasis-native não encontrado!"
+    return 1
+  fi
+  echo "Encontrado: $zip_file"
+
+  rm -rf "$DEST_DIR"
+  mkdir -p "$DEST_DIR"
+  unzip "$zip_file" -d "$DEST_DIR"
+  echo "Extraído para $DEST_DIR"
+
+  [ -f "$SCRIPT_DIR/distribute.sh" ] && cp "$SCRIPT_DIR/distribute.sh" "$DEST_DIR/" \
+    && echo "  Copiado: distribute.sh"
+  [ -f "$SCRIPT_DIR/package-weasis.sh" ] && cp "$SCRIPT_DIR/package-weasis.sh" "$DEST_DIR/build/script/package-weasis.sh" \
+    && echo "  Copiado: package-weasis.sh -> build/script/"
+
+  _rename_app_in_conf
+  _inject_images
+  return 0
+}
+
+set +e
+_do_full_build
+BUILD_EXIT=$?
+set -e
+
+if [ $BUILD_EXIT -ne 0 ]; then
+  if [ ! -d "$BUNDLE_DIR" ]; then
+    echo "ERRO: Build falhou e não há bin-dist existente para usar como fallback."
+    echo "      Verifique a conexão com a internet e tente novamente."
+    exit 1
+  fi
+  echo ""
+  echo "AVISO: Build completo falhou (provável falta de conexão com a internet)."
+  echo "       Usando bin-dist existente em: $BIN_DIR"
+  echo "       Recompilando módulos customizados (modo offline)..."
+  cd "$SCRIPT_DIR"
+  set +e
+  "$MVN" install -pl weasis-base/weasis-base-viewer2d,weasis-sex-classifier -DskipTests -q --offline
+  PLUGIN_EXIT=$?
+  set -e
+  if [ $PLUGIN_EXIT -ne 0 ]; then
+    echo "AVISO: Não foi possível recompilar os módulos offline. Usando versões já presentes em bin-dist."
+  else
+    JAR=$(ls "$SCRIPT_DIR/weasis-sex-classifier/target/weasis-sex-classifier-"*.jar 2>/dev/null | head -n 1)
+    BASE_JAR=$(ls "$SCRIPT_DIR/weasis-base/weasis-base-viewer2d/target/weasis-base-viewer2d-"*.jar \
+        2>/dev/null | grep -v sources | grep -v javadoc | head -n 1)
+    [ -n "$JAR" ] && cp "$JAR" "$BUNDLE_DIR/" && echo "Plugin atualizado: $(basename "$JAR")"
+    [ -n "$BASE_JAR" ] && cp "$BASE_JAR" "$BUNDLE_DIR/" && echo "Base viewer atualizado: $(basename "$BASE_JAR")"
+  fi
+fi
+
+# Injetar módulos customizados (no-op if already injected above via --offline path)
+echo "Injetando módulos customizados..."
 for PLUGIN_JAR in "$SCRIPT_DIR/weasis-sex-classifier/target/"*.jar; do
   [ -f "$PLUGIN_JAR" ] && cp "$PLUGIN_JAR" "$BUNDLE_DIR/" \
     && echo "  Injetado: $(basename "$PLUGIN_JAR")"
 done
+BASE_JAR=$(ls "$SCRIPT_DIR/weasis-base/weasis-base-viewer2d/target/weasis-base-viewer2d-"*.jar \
+    2>/dev/null | grep -v sources | grep -v javadoc | head -n 1)
+[ -n "$BASE_JAR" ] && cp "$BASE_JAR" "$BUNDLE_DIR/" && echo "  Injetado: $(basename "$BASE_JAR")"
 
 # Copiar modelos e configurar Python
 _copy_models
 _setup_python
 
 if [ ! -d "$BIN_DIR" ]; then
-  echo "ERRO: $BIN_DIR não encontrado após extração."
+  echo "ERRO: $BIN_DIR não encontrado."
   exit 1
 fi
 
