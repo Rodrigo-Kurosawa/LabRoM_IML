@@ -211,7 +211,7 @@ _inject_images() {
     # PNGs de banner/splash — usam splash.png (landscape, 1200x590) como fonte
     _img_resize_black "$splash_src" "$DEST_DIR/bin-dist/weasis/resources/images/about.png"       374 147
     _img_resize_black "$splash_src" "$DEST_DIR/bin-dist/weasis/resources/images/about-round.png" 374 147
-    _img_resize_black "$splash_src" "$DEST_DIR/bin-dist/weasis/resources/images/logo-button.png" 140  44
+    _img_resize_black "$splash_src" "$DEST_DIR/bin-dist/weasis/resources/images/logo-button.png" 347 147
     # SVG real usado pelo app (WeasisAbout.svg = splash/about dialog)
     local splash_b64
     splash_b64=$(base64 -i "$splash_src")
