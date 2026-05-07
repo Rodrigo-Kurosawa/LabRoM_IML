@@ -211,6 +211,22 @@ if ($machine -ne "windows") {
 }
 
 # ---------------------------------------------------------------------------
+# Aplicar main.wxs customizado (sem wixhelper.dll) sobre o weasis-native
+# O weasis-native nao e um repositorio git e pode ser sobrescrito pelo
+# run_weasis.ps1 — guardamos os arquivos corrigidos dentro do LabRoM_IML.
+# ---------------------------------------------------------------------------
+$labromRoot = $PSScriptRoot
+if ($SCRIPT_DIR -ne $PSScriptRoot) { $labromRoot = $PSScriptRoot }
+foreach ($arc_ in @("x86-64", "aarch64")) {
+    $src_ = Join-Path $labromRoot "build\msi\$arc_\main.wxs"
+    $dst_ = Join-Path $SCRIPT_DIR "build\script\resources\windows\msi\$arc_\main.wxs"
+    if ((Test-Path $src_) -and (Test-Path (Split-Path $dst_ -Parent))) {
+        Copy-Item $src_ $dst_ -Force
+        Write-Host ("[OK]    main.wxs ($arc_) aplicado.")
+    }
+}
+
+# ---------------------------------------------------------------------------
 # Configurar jpackage
 # ---------------------------------------------------------------------------
 $RES        = Join-Path $SCRIPT_DIR "build\script\resources\windows"
