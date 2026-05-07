@@ -208,128 +208,110 @@ build_linux_docker() {
 
 # ─── LabRoM/IML: funções de setup ────────────────────────────────────────────
 
-# Cria o venv Python em $1 com todas as dependências do plugin.
-_setup_python_venv() {
-  local venv_dir="$1"
-  local python_cmd=""
+# ─── python-build-standalone (astral-sh) ─────────────────────────────────────
+# CPython pré-compilado com libpython embutida via RPATH $ORIGIN/../lib.
+# Funciona em qualquer distro com glibc 2.17+ (Ubuntu 20.04+) sem Python instalado.
+# Releases: https://github.com/astral-sh/python-build-standalone/releases
+_PBS_RELEASE="20260504"
+_PBS_PY_VER="3.12.13"
 
-  # No Linux, preferir python3.12 para compatibilidade com Ubuntu 24.04 LTS (alvo principal).
-  # Python 3.13+ requer libpython3.13.so no destino — Ubuntu 24.04 não tem essa versão.
-  if [[ "$(uname -s)" = "Linux" ]]; then
-    _PY_CANDIDATES="python3.12 python3.11 python3.10 python3.9 python3 python"
-  else
-    _PY_CANDIDATES="python3 python3.12 python3.11 python3.10 python3.9 python"
+_pbs_filename() {
+  local platform="$1" arch="$2"
+  case "${platform}-${arch}" in
+    linux-x86_64)   echo "cpython-${_PBS_PY_VER}+${_PBS_RELEASE}-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz" ;;
+    linux-aarch64)  echo "cpython-${_PBS_PY_VER}+${_PBS_RELEASE}-aarch64-unknown-linux-gnu-install_only_stripped.tar.gz" ;;
+    macosx-x86_64)  echo "cpython-${_PBS_PY_VER}+${_PBS_RELEASE}-x86_64-apple-darwin-install_only_stripped.tar.gz" ;;
+    macosx-aarch64) echo "cpython-${_PBS_PY_VER}+${_PBS_RELEASE}-aarch64-apple-darwin-install_only_stripped.tar.gz" ;;
+    *) echo "" ;;
+  esac
+}
+
+# Baixa (ou usa cache em ~/.cache/labrom-pbs/) o tarball do python-build-standalone.
+# Imprime o caminho do tarball em stdout. Retorna 1 sem abortar em caso de falha.
+_download_standalone_python() {
+  local platform="$1" arch="$2"
+  local cache_dir="$HOME/.cache/labrom-pbs"
+  mkdir -p "$cache_dir"
+
+  local filename
+  filename=$(_pbs_filename "$platform" "$arch")
+  if [[ -z "$filename" ]]; then
+    warn "Arquitetura sem suporte para python-build-standalone: ${platform}/${arch}"
+    return 1
   fi
 
-  for candidate in $_PY_CANDIDATES; do
-    if command -v "$candidate" &>/dev/null; then
-      local ver
-      ver=$("$candidate" -c \
-        "import sys; print(sys.version_info.major*10+sys.version_info.minor)" 2>/dev/null)
-      if [[ "${ver:-0}" -ge 39 ]]; then
-        python_cmd="$candidate"
-        break
-      fi
+  local tarball="$cache_dir/$filename"
+  if [[ ! -f "$tarball" ]]; then
+    local url="https://github.com/astral-sh/python-build-standalone/releases/download/${_PBS_RELEASE}/${filename}"
+    info "Baixando Python ${_PBS_PY_VER} standalone (${platform}/${arch})..."
+    if command -v curl &>/dev/null; then
+      curl -L --progress-bar -o "$tarball" "$url" \
+        || { rm -f "$tarball"; warn "Falha ao baixar Python standalone de: $url"; return 1; }
+    elif command -v wget &>/dev/null; then
+      wget -q --show-progress -O "$tarball" "$url" \
+        || { rm -f "$tarball"; warn "Falha ao baixar Python standalone de: $url"; return 1; }
+    else
+      warn "curl ou wget necessário para baixar Python standalone."
+      return 1
     fi
-  done
-
-  if [[ -z "$python_cmd" ]]; then
-    warn "Python 3.9+ não encontrado nesta máquina."
-    warn "O ambiente Python NÃO será embutido na distribuição."
-    warn "Execute './setup-python.sh' no PC de destino antes de usar o plugin."
-    return 0
+    success "Python standalone baixado: ${filename}"
+  else
+    info "Python standalone em cache: ${filename}"
   fi
+  echo "$tarball"
+}
 
-  # Avisa se não for 3.12 no Linux (pode não funcionar no Ubuntu 24.04)
-  local py_minor
-  py_minor=$("$python_cmd" -c "import sys; print(sys.version_info.minor)" 2>/dev/null)
-  local py_major
-  py_major=$("$python_cmd" -c "import sys; print(sys.version_info.major)" 2>/dev/null)
-  if [[ "$(uname -s)" = "Linux" && "${py_major:-0}" -eq 3 && "${py_minor:-0}" -gt 12 ]]; then
-    warn "Python ${py_major}.${py_minor} detectado. Ubuntu 24.04 não tem libpython${py_major}.${py_minor}."
-    warn "Instale python3.12 no build: sudo apt install python3.12 python3.12-venv"
-  fi
+# Extrai o Python standalone em target_dir e instala as dependências do plugin.
+_setup_standalone_python() {
+  local target_dir="$1"
+  local platform="${2:-$(detect_platform)}"
 
-  info "Criando venv isolado em: weasis/python-env/  (aguarde — instala PyTorch et al.)"
-  "$python_cmd" -m venv --copies "$venv_dir" --clear 2>/dev/null \
-    || "$python_cmd" -m venv "$venv_dir" --clear
+  local arch
+  case "$(uname -m)" in
+    x86_64)        arch="x86_64"  ;;
+    arm64|aarch64) arch="aarch64" ;;
+    *) warn "Arquitetura não reconhecida: $(uname -m)"; return 1 ;;
+  esac
 
-  local pip_bin="$venv_dir/bin/pip"
-  [[ -x "$pip_bin" ]] || pip_bin="$venv_dir/Scripts/pip.exe"
+  local tarball
+  tarball=$(_download_standalone_python "$platform" "$arch") || return 1
 
-  if [[ ! -x "$pip_bin" ]]; then
-    warn "pip não encontrado no venv criado. Verifique a instalação de Python."
-    return 0
-  fi
+  info "Extraindo Python ${_PBS_PY_VER} standalone..."
+  rm -rf "$target_dir"
+  local tmp_extract="${target_dir}.extract_$$"
+  mkdir -p "$tmp_extract"
+  tar -xzf "$tarball" -C "$tmp_extract"
+  # O tarball extrai para uma subpasta chamada "python/"
+  mv "$tmp_extract/python" "$target_dir"
+  rm -rf "$tmp_extract"
 
+  local pip_bin="$target_dir/bin/pip3"
+  [[ -x "$pip_bin" ]] || "$target_dir/bin/python3" -m ensurepip --upgrade &>/dev/null
+
+  info "Instalando dependências Python (ultralytics, torch, opencv-python, grad-cam)..."
   "$pip_bin" install --upgrade pip --quiet
   "$pip_bin" install \
     ultralytics \
-    "torch" \
+    torch \
     opencv-python \
     grad-cam \
     --quiet
 
-  local py_bin="$venv_dir/bin/python3"
-  [[ -x "$py_bin" ]] || py_bin="$venv_dir/Scripts/python.exe"
-  local ul_ver
-  ul_ver=$("$py_bin" -c "import ultralytics; print(ultralytics.__version__)" 2>/dev/null \
-           || echo "instalado")
-  success "Venv Python pronto  (ultralytics ${ul_ver})"
-}
-
-# Gera setup-python.sh (Unix) e setup-python.bat (Windows) dentro de bin-dist.
-_create_setup_scripts() {
-  # ── Unix ──
-  cat > "$BIN_DIST/setup-python.sh" << 'SETUP_SH'
-#!/bin/bash
-# setup-python.sh  –  Configura o ambiente Python para o LabRoM Sex Classifier.
-# Execute UMA VEZ em PCs novos:   bash setup-python.sh
-# O venv é criado em ~/.weasis/labrom-env/ e detectado automaticamente pelo plugin.
-set -e
-VENV_DIR="$HOME/.weasis/labrom-env"
-
-python_cmd=""
-for c in python3 python3.12 python3.11 python3.10 python3.9 python; do
-  if command -v "$c" &>/dev/null; then
-    ver=$("$c" -c "import sys; print(sys.version_info.major*10+sys.version_info.minor)" 2>/dev/null)
-    [ "${ver:-0}" -ge 39 ] && { python_cmd="$c"; break; }
+  # Desabilita torch.compile: requer ferramentas de compilação GPU ausentes na maioria dos PCs
+  local py_ver_dir
+  py_ver_dir=$(ls "$target_dir/lib/" | grep "^python3" | head -1)
+  if [[ -d "$target_dir/lib/${py_ver_dir}/site-packages" ]]; then
+    cat > "$target_dir/lib/${py_ver_dir}/site-packages/sitecustomize.py" << 'SITECUSTOMIZE'
+import os
+os.environ.setdefault("TORCH_COMPILE_DISABLE", "1")
+os.environ.setdefault("TORCHDYNAMO_DISABLE", "1")
+SITECUSTOMIZE
   fi
-done
 
-if [ -z "$python_cmd" ]; then
-  echo "ERRO: Python 3.9+ não encontrado. Instale Python e tente novamente."
-  exit 1
-fi
-
-echo "Criando ambiente Python em: $VENV_DIR"
-mkdir -p "$(dirname "$VENV_DIR")"
-"$python_cmd" -m venv --copies "$VENV_DIR" --clear 2>/dev/null \
-  || "$python_cmd" -m venv "$VENV_DIR" --clear
-
-"$VENV_DIR/bin/pip" install --upgrade pip --quiet
-"$VENV_DIR/bin/pip" install \
-  ultralytics torch opencv-python grad-cam --quiet
-
-echo "Ambiente Python configurado com sucesso em: $VENV_DIR"
-SETUP_SH
-  chmod +x "$BIN_DIST/setup-python.sh"
-
-  # ── Windows ──
-  cat > "$BIN_DIST/setup-python.bat" << 'SETUP_BAT'
-@echo off
-REM setup-python.bat  –  Configura o ambiente Python para o LabRoM Sex Classifier.
-REM Execute UMA VEZ em PCs novos (duplo-clique ou cmd).
-REM O venv e criado em %USERPROFILE%\.weasis\labrom-env\ e detectado automaticamente.
-set VENV=%USERPROFILE%\.weasis\labrom-env
-python -m venv --copies "%VENV%"
-"%VENV%\Scripts\pip" install --upgrade pip
-"%VENV%\Scripts\pip" install ultralytics torch opencv-python grad-cam
-echo Ambiente Python configurado com sucesso em: %VENV%
-pause
-SETUP_BAT
-
-  success "Scripts de setup gerados: setup-python.sh  /  setup-python.bat"
+  local ul_ver
+  ul_ver=$("$target_dir/bin/python3" -c \
+    "import ultralytics; print(ultralytics.__version__)" 2>/dev/null || echo "instalado")
+  success "Python ${_PBS_PY_VER} standalone pronto  (ultralytics ${ul_ver})"
 }
 
 # Retorna o diretório "app/" dentro da imagem jpackage gerada.
@@ -345,16 +327,20 @@ _app_dir_in_image() {
   esac
 }
 
-# Instala o venv Python directamente dentro da imagem do app já gerada.
-# Isso evita que jpackage tente re-assinar os binários do Python (codesign).
+# Instala Python standalone dentro da imagem do app gerada pelo jpackage.
 _install_venv_in_app() {
   local app_dir="$1"
+  local platform="${2:-$(detect_platform)}"
   if [[ -z "$app_dir" || ! -d "$app_dir" ]]; then
-    warn "App dir não encontrado: ${app_dir}. Pulando instalação do venv."
+    warn "App dir não encontrado: ${app_dir}. Pulando instalação do Python."
     return 0
   fi
-  step "Instalando ambiente Python dentro do app (pós-jpackage)"
-  _setup_python_venv "${app_dir}/python-env"
+  step "Instalando Python ${_PBS_PY_VER} standalone dentro do app"
+  _setup_standalone_python "${app_dir}/python-env" "$platform" || {
+    warn "Python standalone não instalado. O .deb será gerado sem Python embutido."
+    warn "O classificador de sexo não funcionará sem python-env."
+    return 0
+  }
 }
 
 # Fase principal LabRoM: JAR + modelos (sem venv — este vai para dentro do app após jpackage)
@@ -422,16 +408,13 @@ setup_labrom() {
   fi
 
   # 3. Remover qualquer python-env residual do input do jpackage.
-  #    O venv é criado DENTRO do app após o build (evita conflito de codesign).
+  #    O Python standalone é instalado DENTRO do app após o build.
   if [[ -d "$BIN_DIST/weasis/python-env" ]]; then
     info "Removendo python-env residual de bin-dist/weasis/ (será recriado pós-build)..."
     rm -rf "$BIN_DIST/weasis/python-env"
   fi
 
-  # 4. Gerar scripts de setup para PCs que precisem recriar o venv manualmente
-  _create_setup_scripts
-
-  # 5. Limpar caches do Felix OSGi (exceto cache-local do dev) para garantir
+  # 4. Limpar caches do Felix OSGi (exceto cache-local do dev) para garantir
   #    que o próximo lançamento do app use os JARs atualizados do bundle.
   local weasis_cache_dir="$HOME/.weasis"
   if [[ -d "$weasis_cache_dir" ]]; then
@@ -505,53 +488,52 @@ case "$TARGET_PLATFORM" in
           mv "${_LINUX_APP_DIR}/python-env" "$_VENV_TMP"
         fi
 
-        # Passo 4: gera o .deb sem o venv (rápido — sem scan de .so do torch)
+        # Passo 4: gera o .deb sem python-env (rápido — sem scan de .so do torch)
         bash "$BUILD_SCRIPT" --jdk "$JDK_PATH" --input "$BIN_DIST" --output "$OUTPUT_PATH" --installer-only
 
-        # Passo 5: reinjecta o venv no .deb via repack e restaura na imagem local
-        if [[ -d "$_VENV_TMP" ]]; then
-          _DEB_FILE=$(ls "$OUTPUT_PATH"/*.deb 2>/dev/null | head -1)
-          if [[ -n "$_DEB_FILE" ]]; then
-            _REPACK_DIR="/tmp/labrom-repack-$$"
-            info "Reempacotando .deb com o venv Python..."
-            dpkg-deb -R "$_DEB_FILE" "$_REPACK_DIR"
+        # Passo 5: repack único — corrige deps E injeta python-env (se disponível)
+        # O patch de deps SEMPRE roda, independente de o python-env existir.
+        _DEB_FILE=$(ls "$OUTPUT_PATH"/*.deb 2>/dev/null | head -1)
+        if [[ -n "$_DEB_FILE" ]]; then
+          _REPACK_DIR="/tmp/labrom-repack-$$"
+          dpkg-deb -R "$_DEB_FILE" "$_REPACK_DIR"
+
+          # Injeta python-env se foi criado com sucesso
+          if [[ -d "$_VENV_TMP" ]]; then
+            info "Reempacotando .deb com Python standalone..."
             cp -Rf "$_VENV_TMP" "$_REPACK_DIR/opt/labrom-iml/lib/app/python-env"
-
-            # ── Tornar o venv relocatável para o PC de destino ──────────────
-            _VENV_IN_DEB="$_REPACK_DIR/opt/labrom-iml/lib/app/python-env"
-
-            # Detecta versão do Python no venv (ex: "python3.12")
-            _PY_VER_DIR=$(ls "$_VENV_IN_DEB/lib/" 2>/dev/null | head -1)
-            _PY_SHORTVER="${_PY_VER_DIR#python}"   # "3.12"
-
-            # Corrige pyvenv.cfg para apontar para o Python do sistema de destino
-            _PYVENV_CFG="$_VENV_IN_DEB/pyvenv.cfg"
-            if [[ -f "$_PYVENV_CFG" && -n "$_PY_SHORTVER" ]]; then
-              sed -i "s|^home = .*|home = /usr/bin|"                               "$_PYVENV_CFG"
-              sed -i "s|^base-executable = .*|base-executable = /usr/bin/python${_PY_SHORTVER}|" "$_PYVENV_CFG"
-              sed -i "s|^base-prefix = .*|base-prefix = /usr|"                     "$_PYVENV_CFG"
-              sed -i "s|^base-exec-prefix = .*|base-exec-prefix = /usr|"           "$_PYVENV_CFG"
-              info "pyvenv.cfg → /usr/bin/python${_PY_SHORTVER}"
-            fi
-
-            # Desabilita torch.compile/_inductor (requer ferramentas GPU/CUDA ausentes na maioria dos PCs)
-            _SITE_PKG="$_VENV_IN_DEB/lib/${_PY_VER_DIR}/site-packages"
-            if [[ -d "$_SITE_PKG" ]]; then
-              cat > "$_SITE_PKG/sitecustomize.py" << 'SITECUSTOMIZE'
-import os
-# Disable PyTorch JIT/compile backend — requires GPU compiler tools not available on all systems
-os.environ.setdefault("TORCH_COMPILE_DISABLE", "1")
-os.environ.setdefault("TORCHDYNAMO_DISABLE", "1")
-SITECUSTOMIZE
-              info "sitecustomize.py → desabilita torch.compile"
-            fi
-
-            fakeroot dpkg-deb -b "$_REPACK_DIR" "$_DEB_FILE"
-            rm -rf "$_REPACK_DIR"
-            success "Venv reinjetado no .deb"
+          else
+            warn "Python standalone não disponível — .deb será gerado sem Python embutido."
           fi
-          mv "$_VENV_TMP" "${_LINUX_APP_DIR}/python-env"
+
+          # Corrige dependências do jpackage incompatíveis com Ubuntu 20.04:
+          #   libmd0    — introduzido no Ubuntu 22.04 (funções já no libc do 20.04)
+          #   libgcc-s1 — renomeado de libgcc1 no Ubuntu 22.04
+          _CTRL="$_REPACK_DIR/DEBIAN/control"
+          python3 - "$_CTRL" << 'PYEOF'
+import sys, re
+path = sys.argv[1]
+text = open(path).read()
+def fix(line):
+    pkgs = [p.strip() for p in re.sub(r'^Depends:\s*', '', line).split(',')]
+    pkgs = [p for p in pkgs if p and p != 'libmd0']
+    pkgs = [('libgcc1' if p == 'libgcc-s1' else p) for p in pkgs]
+    seen, unique = set(), []
+    for p in pkgs:
+        if p not in seen: seen.add(p); unique.append(p)
+    return 'Depends: ' + ', '.join(unique)
+open(path, 'w').write('\n'.join(
+    fix(l) if l.startswith('Depends:') else l for l in text.splitlines()
+) + '\n')
+PYEOF
+          info "Dependências do .deb ajustadas para Ubuntu 20.04+"
+
+          fakeroot dpkg-deb -b "$_REPACK_DIR" "$_DEB_FILE"
+          rm -rf "$_REPACK_DIR"
+          [[ -d "$_VENV_TMP" ]] && success "Python standalone reinjetado no .deb" \
+                                 || success ".deb reempacotado (sem Python embutido)"
         fi
+        [[ -d "$_VENV_TMP" ]] && mv "$_VENV_TMP" "${_LINUX_APP_DIR}/python-env"
       fi
       success "Instalador Linux (.deb) gerado em: ${OUTPUT_PATH}"
     else
