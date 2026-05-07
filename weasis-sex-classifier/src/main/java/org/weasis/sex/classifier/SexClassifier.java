@@ -30,10 +30,11 @@ public final class SexClassifier {
 
   private static final Logger LOGGER = LoggerFactory.getLogger(SexClassifier.class);
 
-  private static final String CLASSIFY_SCRIPT  = "sex_classify.py";
-  private static final String MODEL_FILENAME   = "best.pt";
+  private static final String CLASSIFY_SCRIPT = "sex_classify.py";
+  private static final String MODEL_FILENAME = "final.pt";
 
-  private SexClassifier() {}
+  private SexClassifier() {
+  }
 
   // ───────────────────────────────────────────────────────────────────────────
   // Result types
@@ -41,35 +42,35 @@ public final class SexClassifier {
 
   /** Classification result for a single pivot image. */
   public static final class ImageResult {
-    public final int    index;
-    public final File   imageFile;   // original pivot image
-    public final String label;       // e.g. "M" or "F"
+    public final int index;
+    public final File imageFile; // original pivot image
+    public final String label; // e.g. "M" or "F"
     public final double probability; // [0, 1]
-    public final File   heatmap;     // Grad-CAM overlay; null if not generated
+    public final File heatmap; // Grad-CAM overlay; null if not generated
 
     public ImageResult(int index, File imageFile,
-                       String label, double probability, File heatmap) {
-      this.index       = index;
-      this.imageFile   = imageFile;
-      this.label       = label;
+        String label, double probability, File heatmap) {
+      this.index = index;
+      this.imageFile = imageFile;
+      this.label = label;
       this.probability = probability;
-      this.heatmap     = heatmap;
+      this.heatmap = heatmap;
     }
   }
 
   /** Aggregated result for the full pivot window. */
   public static final class ClassificationResult {
     public final List<ImageResult> perImage;
-    public final String            finalLabel;
-    public final double            finalProbability;
-    public final String            error;  // null on success
+    public final String finalLabel;
+    public final double finalProbability;
+    public final String error; // null on success
 
     private ClassificationResult(List<ImageResult> pi,
-                                  String fl, double fp, String err) {
-      this.perImage         = pi;
-      this.finalLabel       = fl;
+        String fl, double fp, String err) {
+      this.perImage = pi;
+      this.finalLabel = fl;
       this.finalProbability = fp;
-      this.error            = err;
+      this.error = err;
     }
 
     public static ClassificationResult success(
@@ -81,7 +82,9 @@ public final class SexClassifier {
       return new ClassificationResult(new ArrayList<>(), null, 0.0, msg);
     }
 
-    public boolean isSuccess() { return error == null; }
+    public boolean isSuccess() {
+      return error == null;
+    }
   }
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -92,9 +95,9 @@ public final class SexClassifier {
    * Classifies every image in {@code images} with {@code best.pt} and writes
    * Grad-CAM heatmaps to {@code heatmapDir}.
    *
-   * @param images      pivot-window PNG files (output of {@link PivotDetector})
-   * @param heatmapDir  directory where heatmap PNGs are written
-   * @param modelPath   path to {@code best.pt}; {@code null} uses auto-discovery
+   * @param images     pivot-window PNG files (output of {@link PivotDetector})
+   * @param heatmapDir directory where heatmap PNGs are written
+   * @param modelPath  path to {@code best.pt}; {@code null} uses auto-discovery
    * @return aggregated classification result
    */
   public static ClassificationResult classify(
@@ -111,7 +114,7 @@ public final class SexClassifier {
     if (!new File(modelPath).exists()) {
       return ClassificationResult.error(
           "best.pt not found at: " + modelPath
-          + ".<br>Place the model file there and retry.");
+              + ".<br>Place the model file there and retry.");
     }
 
     String python = DicomExtractor.findPython();
@@ -133,21 +136,21 @@ public final class SexClassifier {
     cmd.add(scriptFile.getAbsolutePath());
     cmd.add(modelPath);
     cmd.add(heatmapDir.getAbsolutePath());
-    for (File f : images) cmd.add(f.getAbsolutePath());
+    for (File f : images)
+      cmd.add(f.getAbsolutePath());
 
     LOGGER.info("Running sex_classify.py on {} image(s)", images.size());
 
     List<ImageResult> perImage = new ArrayList<>();
     String finalLabel = null;
-    double finalProb  = 0.0;
+    double finalProb = 0.0;
 
     try {
       ProcessBuilder pb = new ProcessBuilder(cmd);
       pb.redirectErrorStream(true);
       Process proc = pb.start();
 
-      try (BufferedReader br =
-               new BufferedReader(new InputStreamReader(proc.getInputStream()))) {
+      try (BufferedReader br = new BufferedReader(new InputStreamReader(proc.getInputStream()))) {
         String line;
         while ((line = br.readLine()) != null) {
           line = line.trim();
@@ -157,26 +160,30 @@ public final class SexClassifier {
             String[] parts = line.substring(4).split("\t", 4);
             if (parts.length >= 3) {
               try {
-                int    idx      = Integer.parseInt(parts[0].trim());
-                String label    = parts[1].trim();
-                double prob     = Double.parseDouble(parts[2].trim());
-                File   heatmap  = null;
+                int idx = Integer.parseInt(parts[0].trim());
+                String label = parts[1].trim();
+                double prob = Double.parseDouble(parts[2].trim());
+                File heatmap = null;
                 if (parts.length == 4 && !parts[3].trim().isEmpty()) {
                   File hf = new File(parts[3].trim());
-                  if (hf.exists()) heatmap = hf;
+                  if (hf.exists())
+                    heatmap = hf;
                 }
                 File imgFile = idx < images.size() ? images.get(idx) : null;
                 perImage.add(new ImageResult(idx, imgFile, label, prob, heatmap));
                 LOGGER.debug("  [classify] idx={} label={} prob={}", idx, label, prob);
-              } catch (NumberFormatException ignored) {}
+              } catch (NumberFormatException ignored) {
+              }
             }
           } else if (line.startsWith("FINAL:")) {
             // FINAL:<label>\t<prob>
             String[] parts = line.substring(6).split("\t", 2);
             if (parts.length == 2) {
               finalLabel = parts[0].trim();
-              try { finalProb = Double.parseDouble(parts[1].trim()); }
-              catch (NumberFormatException ignored) {}
+              try {
+                finalProb = Double.parseDouble(parts[1].trim());
+              } catch (NumberFormatException ignored) {
+              }
             }
           } else if (line.startsWith("FAIL:")) {
             LOGGER.warn("sex_classify: {}", line.substring(5));
@@ -229,8 +236,7 @@ public final class SexClassifier {
   // ───────────────────────────────────────────────────────────────────────────
 
   private static File extractScript() throws IOException {
-    try (InputStream is =
-             SexClassifier.class.getResourceAsStream("/" + CLASSIFY_SCRIPT)) {
+    try (InputStream is = SexClassifier.class.getResourceAsStream("/" + CLASSIFY_SCRIPT)) {
       if (is == null) {
         throw new IOException("Bundled script not found: " + CLASSIFY_SCRIPT);
       }
@@ -253,7 +259,8 @@ public final class SexClassifier {
         LOGGER.info("{} found (JAR-relative): {}", MODEL_FILENAME, candidate);
         return candidate.getAbsolutePath();
       }
-    } catch (Exception ignore) {}
+    } catch (Exception ignore) {
+    }
 
     // 2. models/ relative to working directory
     File cwd = new File(System.getProperty("user.dir"), "models/" + MODEL_FILENAME);

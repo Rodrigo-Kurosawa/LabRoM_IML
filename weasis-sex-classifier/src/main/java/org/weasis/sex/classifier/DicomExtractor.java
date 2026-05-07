@@ -61,10 +61,11 @@ public final class DicomExtractor {
   private static final byte[] DICOM_MAGIC = { 'D', 'I', 'C', 'M' };
 
   // --- diagnostic counters (read by SexClassifierAction for error messages) ---
-  static volatile int lastTotal = 0;
-  static volatile int lastDicom = 0;
-  static volatile int lastSc = 0;
-  static volatile int lastPixOk = 0;
+  static volatile int    lastTotal      = 0;
+  static volatile int    lastDicom      = 0;
+  static volatile int    lastSc         = 0;
+  static volatile int    lastPixOk      = 0;
+  static volatile String lastFailReason = null;
 
   private DicomExtractor() {
   }
@@ -117,10 +118,11 @@ public final class DicomExtractor {
     outputDir.mkdirs();
     List<File> pngs = new ArrayList<>();
     int counter = 0;
-    lastTotal = files.size();
-    lastDicom = 0;
-    lastSc = 0;
-    lastPixOk = 0;
+    lastTotal      = files.size();
+    lastDicom      = 0;
+    lastSc         = 0;
+    lastPixOk      = 0;
+    lastFailReason = null;
 
     // ── Phase 1: header scan (pure Java–no dcm4che3) ─────────────────────────
     List<File> scCandidates = new ArrayList<>();
@@ -392,7 +394,9 @@ public final class DicomExtractor {
                 result.add(dest);
             }
           } else if (line.startsWith("FAIL:")) {
-            LOGGER.warn("Python extraction: {}", line.substring(5));
+            String reason = line.substring(5).trim();
+            LOGGER.warn("Python extraction: {}", reason);
+            if (lastFailReason == null) lastFailReason = reason;
           } else {
             LOGGER.debug("[py] {}", line); // warnings, imports, etc.
           }
@@ -467,9 +471,10 @@ public final class DicomExtractor {
               .getCodeSource().getLocation().toURI());
       java.io.File appDir = jar.getParentFile().getParentFile(); // up from bundle/
       for (String rel : new String[]{
+          "python-runtime/python.exe",      // Windows embeddable (distribute.ps1)
           "python-env/bin/python3",
           "python-env/bin/python",
-          "python-env/Scripts/python.exe"   // Windows layout
+          "python-env/Scripts/python.exe"   // Windows venv layout
       }) {
         java.io.File candidate = new java.io.File(appDir, rel);
         if (candidate.canExecute()) {

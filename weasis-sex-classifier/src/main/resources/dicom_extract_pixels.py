@@ -73,6 +73,16 @@ def extract_one(dicom_path, output_dir, index):
         ds = pydicom.dcmread(dicom_path, force=True)
         arr = ds.pixel_array  # pydicom decompresses as needed
 
+        # Collapse multi-frame: keep only first frame
+        if arr.ndim == 4:
+            arr = arr[0]   # (frames, rows, cols, ch) → (rows, cols, ch)
+        elif arr.ndim == 3 and arr.shape[2] not in (1, 3, 4):
+            arr = arr[0]   # (frames, rows, cols) → (rows, cols)
+
+        # Collapse singleton channel axis
+        if arr.ndim == 3 and arr.shape[2] == 1:
+            arr = arr[:, :, 0]
+
         if arr.ndim == 3 and arr.shape[2] == 3:
             f = arr.astype(float)
             std_0 = float(np.std(f[:, :, 0]))

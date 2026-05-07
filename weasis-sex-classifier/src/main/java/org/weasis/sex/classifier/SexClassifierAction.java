@@ -34,6 +34,22 @@ public final class SexClassifierAction {
 
   private static final Logger LOGGER = LoggerFactory.getLogger(SexClassifierAction.class);
 
+  private static final java.util.List<Path> TEMP_DIRS =
+      new java.util.concurrent.CopyOnWriteArrayList<>();
+
+  static {
+    Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+      for (Path dir : TEMP_DIRS) {
+        try {
+          Files.walk(dir)
+              .sorted(java.util.Comparator.reverseOrder())
+              .map(Path::toFile)
+              .forEach(java.io.File::delete);
+        } catch (Exception ignore) {}
+      }
+    }, "sex-classifier-cleanup"));
+  }
+
   private SexClassifierAction() {}
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -85,12 +101,14 @@ public final class SexClassifierAction {
     Path tmpDir;
     try {
       tmpDir = Files.createTempDirectory("sex_classifier_");
+      TEMP_DIRS.add(tmpDir);
     } catch (Exception e) {
       return PipelineResult.error("Could not create temporary directory: " + e.getMessage());
     }
 
     try {
       // Step 1+2: Detect SC and extract images (pure Java)
+      SexClassifierTool.pushStatus("Scanning DICOM images…");
       File scDir = tmpDir.resolve("sc").toFile();
       LOGGER.info("Scanning {} file(s) for Secondary Captures…", viewerFiles.size());
       List<File> pngs = DicomExtractor.extractSecondaryCaptures(viewerFiles, scDir);
@@ -113,6 +131,11 @@ public final class SexClassifierAction {
           diag = "SC detected: " + sc + " | Pixels extracted: " + pix + "<br>"
                + "Failed to extract pixels from SC.<br>"
                + "The compression format may not be supported.";
+          String reason = DicomExtractor.lastFailReason;
+          if (reason != null) {
+            if (reason.length() > 120) reason = reason.substring(0, 120) + "…";
+            diag += "<br><i>" + reason + "</i>";
+          }
         }
         return PipelineResult.error(diag);
       }
@@ -120,6 +143,7 @@ public final class SexClassifierAction {
       LOGGER.info("{} SC image(s) extracted.", pngs.size());
 
       // Step 3: Pivot detection (Python / ResNet-50)
+      SexClassifierTool.pushStatus("Detecting pivot frame (loading model)…");
       if (modelPath == null || modelPath.isEmpty()) {
         modelPath = findModelPath();
       }
@@ -131,6 +155,7 @@ public final class SexClassifierAction {
       }
 
       // Step 4: Sex classification (YOLOv8 / best.pt) + Grad-CAM heatmaps
+      SexClassifierTool.pushStatus("Running sex classification (loading model)…");
       File heatmapDir = tmpDir.resolve("heatmaps").toFile();
       String bestModelPath = SexClassifier.findModelPath();
       SexClassifier.ClassificationResult classification =
@@ -141,6 +166,7 @@ public final class SexClassifierAction {
       }
 
       // Step 5: Build side-by-side composites (pivot | heatmap) for synchronized viewing
+      SexClassifierTool.pushStatus("Building result images…");
       File compositeDir = tmpDir.resolve("composites").toFile();
       List<File> composites = buildComposites(
           pivotImages, classification.perImage, compositeDir, classification);
@@ -316,7 +342,22 @@ public final class SexClassifierAction {
         }
 
         g.dispose();
-        ImageIO.write(composite, "png", dest);
+
+        // Scale to max 1280px wide so the image looks reasonable at 1:1 viewer zoom
+        BufferedImage toWrite = composite;
+        int maxW = 1280;
+        if (composite.getWidth() > maxW) {
+          int scaledH = (int) Math.round((double) composite.getHeight() * maxW / composite.getWidth());
+          BufferedImage scaled = new BufferedImage(maxW, scaledH, BufferedImage.TYPE_INT_RGB);
+          Graphics2D gs = scaled.createGraphics();
+          gs.setRenderingHint(RenderingHints.KEY_INTERPOLATION,
+              RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+          gs.drawImage(composite, 0, 0, maxW, scaledH, null);
+          gs.dispose();
+          toWrite = scaled;
+        }
+
+        ImageIO.write(toWrite, "png", dest);
         composites.add(dest);
 
       } catch (Exception e) {

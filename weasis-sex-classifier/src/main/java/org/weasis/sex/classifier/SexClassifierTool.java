@@ -32,6 +32,7 @@ import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
+import javax.swing.Timer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.weasis.core.api.gui.Insertable;
@@ -40,6 +41,9 @@ import org.weasis.core.api.media.data.MediaReader;
 import org.weasis.core.api.media.data.MediaSeries;
 import org.weasis.core.ui.docking.PluginTool;
 import org.weasis.core.ui.editor.ViewerPluginBuilder;
+import org.weasis.core.ui.editor.image.DefaultView2d;
+import org.weasis.core.ui.editor.image.ViewCanvas;
+import org.weasis.dicom.viewer2d.EventManager;
 
 public class SexClassifierTool extends PluginTool {
 
@@ -59,6 +63,12 @@ public class SexClassifierTool extends PluginTool {
           tool.setStatus("\u2717 " + result.error, Color.RED.darker());
         }
       });
+    }
+  }
+
+  public static void pushStatus(String message) {
+    for (SexClassifierTool tool : INSTANCES) {
+      SwingUtilities.invokeLater(() -> tool.setStatus(message, Color.GRAY));
     }
   }
 
@@ -314,6 +324,23 @@ public class SexClassifierTool extends PluginTool {
       }
       ViewerPluginBuilder.openSequenceInDefaultPlugin(
           series, ViewerPluginBuilder.DefaultDataModel, true, true);
+
+      // After opening, set zoom type to BEST_FIT so all frames auto-fit.
+      // The base viewer defaults to PIXEL_SIZE (1:1), which makes composites appear zoomed in.
+      Timer fitTimer = new Timer(400, ev -> {
+        try {
+          ViewCanvas<?> view = EventManager.getInstance().getSelectedViewPane();
+          if (view != null) {
+            view.setActionsInView(ViewCanvas.ZOOM_TYPE_CMD, DefaultView2d.ZoomType.BEST_FIT);
+            view.resetZoom();
+          }
+        } catch (Exception ex) {
+          LOGGER.warn("Could not apply best-fit zoom: {}", ex.getMessage());
+        }
+      });
+      fitTimer.setRepeats(false);
+      fitTimer.start();
+
     } catch (Exception e) {
       LOGGER.warn("Cannot open images in viewer: {}", e.getMessage());
     }

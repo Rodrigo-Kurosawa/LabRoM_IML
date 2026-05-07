@@ -1,12 +1,12 @@
 #Requires -Version 5.1
-# distribute.ps1 — Gera o instalador MSI do Weasis/LabRoM_IML no Windows.
+# distribute.ps1 - Gera o instalador MSI do Weasis/LabRoM_IML no Windows.
 #
 # Uso:
 #   .\distribute.ps1 [opcoes]
 #
 # Opcoes:
-#   -Jdk <path>     Caminho para um JDK 25 com jpackage  (padrao: auto-detect)
-#   -Output <path>  Pasta de saida dos instaladores      (padrao: .\dist-output)
+#   -Jdk <path>     Caminho para um JDK 25+ com jpackage  (padrao: auto-detect)
+#   -Output <path>  Pasta de saida dos instaladores        (padrao: .\dist-output)
 #   -NoPackage      Gera apenas a imagem de app, sem instalador MSI
 #
 # Pre-requisitos:
@@ -20,23 +20,41 @@ param(
     [switch]$NoPackage
 )
 
-$ErrorActionPreference = "Stop"
-
 $SCRIPT_DIR   = $PSScriptRoot
-$BIN_DIST     = Join-Path $SCRIPT_DIR "bin-dist"
+
+# distribute.ps1 pode ser executado de LabRoM_IML/ ou de weasis-native/.
+# Detecta automaticamente qual dos dois tem bin-dist.
+$BIN_DIST = Join-Path $SCRIPT_DIR "bin-dist"
+if (-not (Test-Path $BIN_DIST)) {
+    $alt = Join-Path (Split-Path $SCRIPT_DIR -Parent) "weasis-native"
+    if (Test-Path (Join-Path $alt "bin-dist")) {
+        $SCRIPT_DIR = $alt
+        $BIN_DIST   = Join-Path $SCRIPT_DIR "bin-dist"
+        Write-Host ("[INFO]  Usando weasis-native em: " + $SCRIPT_DIR)
+    }
+}
+
 $BUILD_PROPS  = Join-Path $SCRIPT_DIR "build\script\build.properties"
 
-# Validar pré-requisitos
-if (-not (Test-Path $BIN_DIST))   { Write-Error "bin-dist nao encontrado em: $BIN_DIST`nExecute run_weasis.ps1 primeiro para gerar o bin-dist."; exit 1 }
-if (-not (Test-Path $BUILD_PROPS)){ Write-Error "build.properties nao encontrado em: $BUILD_PROPS"; exit 1 }
+# Validar pre-requisitos
+if (-not (Test-Path $BIN_DIST)) {
+    Write-Host ("ERRO: bin-dist nao encontrado em: " + $BIN_DIST)
+    Write-Host "Execute run_weasis.ps1 primeiro para gerar o bin-dist."
+    exit 1
+}
+if (-not (Test-Path $BUILD_PROPS)) {
+    Write-Host ("ERRO: build.properties nao encontrado em: " + $BUILD_PROPS)
+    exit 1
+}
 
 # ---------------------------------------------------------------------------
-# Auto-detectar JDK
+# Auto-detectar JDK com jpackage
 # ---------------------------------------------------------------------------
 if (-not $Jdk) {
     if ($env:JAVA_HOME -and (Test-Path "$env:JAVA_HOME\bin\jpackage.exe")) {
         $Jdk = $env:JAVA_HOME
-    } else {
+    }
+    if (-not $Jdk) {
         $userJava = Join-Path $env:USERPROFILE "Java"
         if (Test-Path $userJava) {
             $found = Get-ChildItem $userJava -Directory -ErrorAction SilentlyContinue |
@@ -47,57 +65,60 @@ if (-not $Jdk) {
     }
     if (-not $Jdk) {
         $javaCmd = Get-Command java -ErrorAction SilentlyContinue
-        if ($javaCmd) {
+        if ($javaCmd -and $javaCmd.Source -notlike "*WindowsApps*") {
             $candidate = Split-Path (Split-Path $javaCmd.Source -Parent) -Parent
             if (Test-Path "$candidate\bin\jpackage.exe") { $Jdk = $candidate }
         }
     }
 }
+
 if (-not $Jdk -or -not (Test-Path "$Jdk\bin\jpackage.exe")) {
-    Write-Error "jpackage nao encontrado. Forneca o caminho com -Jdk <path_do_jdk25>"
+    Write-Host "ERRO: jpackage nao encontrado. Forneca o caminho com -Jdk <path_do_jdk25>"
     exit 1
 }
-Write-Host "[OK]    JDK: $Jdk"
+Write-Host ("[OK]    JDK: " + $Jdk)
 
 $JPACKAGE = Join-Path $Jdk "bin\jpackage.exe"
 $JAVA     = Join-Path $Jdk "bin\java.exe"
 
 if (-not $Output) { $Output = Join-Path $SCRIPT_DIR "dist-output" }
 New-Item -ItemType Directory -Force -Path $Output | Out-Null
-Write-Host "[INFO]  Saida: $Output"
+Write-Host ("[INFO]  Saida: " + $Output)
 
 # ---------------------------------------------------------------------------
-# Ler versão
+# Ler versao
 # ---------------------------------------------------------------------------
 $WEASIS_VERSION = (Get-Content $BUILD_PROPS |
     Where-Object { $_ -match "^weasis\.version=" }) -replace "^weasis\.version=", ""
-Write-Host "[INFO]  Versao Weasis: $WEASIS_VERSION"
+Write-Host ("[INFO]  Versao Weasis: " + $WEASIS_VERSION)
 
 # ---------------------------------------------------------------------------
 # LabRoM setup: compilar JAR + copiar modelos
 # ---------------------------------------------------------------------------
 $SEX_CLASSIFIER_DIR = Join-Path $SCRIPT_DIR "weasis-sex-classifier"
-# Fallback: quando distribute.ps1 é executado de dentro do weasis-native extraído
 if (-not (Test-Path $SEX_CLASSIFIER_DIR)) {
     $SEX_CLASSIFIER_DIR = Join-Path (Split-Path $SCRIPT_DIR -Parent) "LabRoM_IML\weasis-sex-classifier"
 }
 
 if (Test-Path $SEX_CLASSIFIER_DIR) {
-    Write-Host "`n── LabRoM/IML — preparando plugin Sex Classifier ──"
+    Write-Host ""
+    Write-Host "-- LabRoM/IML: preparando plugin Sex Classifier --"
 
     $bundleDir = Join-Path $BIN_DIST "weasis\bundle"
 
-    # Compilar JAR se não existir
     $jar = Get-ChildItem (Join-Path $SEX_CLASSIFIER_DIR "target") `
            -Filter "weasis-sex-classifier-*.jar" -ErrorAction SilentlyContinue |
            Where-Object { $_.Name -notmatch "sources" } | Select-Object -First 1
     if (-not $jar) {
-        Write-Host "[INFO]  JAR nao encontrado — compilando com mvn package..."
-        $mvn = Get-Command mvn -ErrorAction SilentlyContinue
-        if (-not $mvn) { $mvn = Get-Command mvn.cmd -ErrorAction SilentlyContinue }
-        if ($mvn) {
+        Write-Host "[INFO]  JAR nao encontrado - compilando com mvn package..."
+        $mvnCmd = $null
+        foreach ($c in @("mvn", "mvn.cmd")) {
+            $m = Get-Command $c -ErrorAction SilentlyContinue
+            if ($m) { $mvnCmd = $m.Source; break }
+        }
+        if ($mvnCmd) {
             Push-Location $SEX_CLASSIFIER_DIR
-            & $mvn.Source package -DskipTests -q
+            & $mvnCmd package -DskipTests -q
             Pop-Location
             $jar = Get-ChildItem (Join-Path $SEX_CLASSIFIER_DIR "target") `
                    -Filter "weasis-sex-classifier-*.jar" -ErrorAction SilentlyContinue |
@@ -106,12 +127,11 @@ if (Test-Path $SEX_CLASSIFIER_DIR) {
     }
     if ($jar) {
         Copy-Item $jar.FullName $bundleDir -Force
-        Write-Host "[OK]    Plugin JAR -> bundle\  ($($jar.Name))"
+        Write-Host ("[OK]    Plugin JAR -> bundle\  (" + $jar.Name + ")")
     } else {
         Write-Warning "JAR nao encontrado. Certifique-se de ter executado run_weasis.ps1 primeiro."
     }
 
-    # Copiar modelos (.pt)
     $modelsSrc = Join-Path $SEX_CLASSIFIER_DIR "models"
     if (Test-Path $modelsSrc) {
         $modelsDst = Join-Path $BIN_DIST "weasis\models"
@@ -120,19 +140,18 @@ if (Test-Path $SEX_CLASSIFIER_DIR) {
             Copy-Item $_.FullName $modelsDst -Force
         }
         $n = (Get-ChildItem $modelsDst -Filter "*.pt" -ErrorAction SilentlyContinue).Count
-        Write-Host "[OK]    Modelos (.pt) -> weasis\models\  ($n arquivo(s))"
+        Write-Host ("[OK]    Modelos (.pt) -> weasis\models\  (" + $n + " arquivo(s))")
     } else {
-        Write-Warning "Pasta models/ nao encontrada em: $modelsSrc"
+        Write-Warning ("Pasta models/ nao encontrada em: " + $modelsSrc)
     }
 
-    # Remover python-env residual do input do jpackage (será instalado pós-build)
     $residualVenv = Join-Path $BIN_DIST "weasis\python-env"
     if (Test-Path $residualVenv) {
         Remove-Item -Recurse -Force $residualVenv
         Write-Host "[INFO]  python-env residual removido (sera instalado pos-build)"
     }
 } else {
-    Write-Warning "Diretorio weasis-sex-classifier nao encontrado — pulando fase LabRoM."
+    Write-Warning ("Diretorio weasis-sex-classifier nao encontrado - pulando fase LabRoM.")
 }
 
 # ---------------------------------------------------------------------------
@@ -141,26 +160,26 @@ if (Test-Path $SEX_CLASSIFIER_DIR) {
 $coreImgGlob = Get-ChildItem (Join-Path $BIN_DIST "weasis\bundle") `
     -Filter "weasis-core-img-*" -ErrorAction SilentlyContinue | Select-Object -First 1
 if (-not $coreImgGlob) {
-    Write-Error "weasis-core-img JAR nao encontrado em bin-dist\weasis\bundle\"
+    Write-Host "ERRO: weasis-core-img JAR nao encontrado em bin-dist\weasis\bundle\"
     exit 1
 }
 
 $tmpJar = Join-Path $SCRIPT_DIR "_weasis-core-img-tmp.jar"
 if ($coreImgGlob.Extension -eq ".xz") {
-    # Descompactar XZ — tenta bash (Git for Windows) ou 7-zip
     $bash = Get-Command bash -ErrorAction SilentlyContinue
     $sz   = Get-Command 7z  -ErrorAction SilentlyContinue
     if ($bash) {
         $unixSrc = $coreImgGlob.FullName.Replace('\', '/')
         $unixDst = $tmpJar.Replace('\', '/')
-        & bash -c "cp `"$unixSrc`" `"$unixDst.xz`" && xz -d `"$unixDst.xz`""
+        & bash -c ("cp `"" + $unixSrc + "`" `"" + $unixDst + ".xz`" && xz -d `"" + $unixDst + ".xz`"")
     } elseif ($sz) {
-        & 7z e $coreImgGlob.FullName "-o$(Split-Path $tmpJar -Parent)" -y | Out-Null
+        & 7z e $coreImgGlob.FullName ("-o" + (Split-Path $tmpJar -Parent)) -y | Out-Null
         $extracted = Get-ChildItem (Split-Path $tmpJar -Parent) -Filter "weasis-core-img-*.jar" |
                      Select-Object -First 1
         if ($extracted) { Rename-Item $extracted.FullName $tmpJar -Force }
     } else {
-        Write-Error "7-Zip ou Git Bash necessario para descompactar $($coreImgGlob.Name).`nInstale Git for Windows (https://gitforwindows.org) ou 7-Zip (https://7-zip.org)."
+        Write-Host "ERRO: 7-Zip ou Git Bash necessario para descompactar .xz"
+        Write-Host "Instale Git for Windows ou 7-Zip e tente novamente."
         exit 1
     }
 } else {
@@ -168,31 +187,34 @@ if ($coreImgGlob.Extension -eq ".xz") {
 }
 
 if (-not (Test-Path $tmpJar)) {
-    Write-Error "Falha ao preparar weasis-core-img.jar para deteccao de arquitetura."
+    Write-Host "ERRO: Falha ao preparar weasis-core-img.jar para deteccao de arquitetura."
     exit 1
 }
 
-$ARC_OS = & $JAVA -cp $tmpJar org.weasis.opencv.natives.NativeLibrary 2>$null
+$ARC_OS = (& $JAVA -cp $tmpJar org.weasis.opencv.natives.NativeLibrary 2>$null)
 if (-not $ARC_OS) {
-    $ARC_OS = & $JAVA -cp $tmpJar org.weasis.core.util.NativeLibrary 2>$null
+    $ARC_OS = (& $JAVA -cp $tmpJar org.weasis.core.util.NativeLibrary 2>$null)
 }
 Remove-Item $tmpJar -ErrorAction SilentlyContinue
 
-if (-not $ARC_OS) { Write-Error "Nao foi possivel detectar a arquitetura do sistema."; exit 1 }
+if (-not $ARC_OS) {
+    Write-Host "ERRO: Nao foi possivel detectar a arquitetura do sistema."
+    exit 1
+}
 $machine = $ARC_OS.Split("-")[0]
 $arc     = ($ARC_OS.Split("-") | Select-Object -Skip 1) -join "-"
-Write-Host "[INFO]  Plataforma: $ARC_OS  (machine=$machine, arc=$arc)"
+Write-Host ("[INFO]  Plataforma: " + $ARC_OS + "  (machine=" + $machine + ", arc=" + $arc + ")")
 
 if ($machine -ne "windows") {
-    Write-Error "Este script so gera instaladores Windows. Plataforma detectada: $machine"
+    Write-Host ("ERRO: Este script so gera instaladores Windows. Plataforma detectada: " + $machine)
     exit 1
 }
 
 # ---------------------------------------------------------------------------
 # Configurar jpackage
 # ---------------------------------------------------------------------------
-$RES       = Join-Path $SCRIPT_DIR "build\script\resources\windows"
-$INPUT_DIR = Join-Path $BIN_DIST "weasis"
+$RES        = Join-Path $SCRIPT_DIR "build\script\resources\windows"
+$INPUT_DIR  = Join-Path $BIN_DIST "weasis"
 $IMAGE_PATH = Join-Path $Output "Weasis"
 
 $CLEAN_VERSION = $WEASIS_VERSION -replace '-[^.]*$', '' -replace '(\d+\.\d+\.\d+)\.\d+', '$1'
@@ -204,7 +226,18 @@ $JDK_MODULES = "java.base,java.compiler,java.datatransfer,java.net.http,java.des
 
 if (Test-Path $Output) { Remove-Item -Recurse -Force $Output }
 
-Write-Host "`n── Gerando imagem do app com jpackage ──"
+# JDK 26 requer caminho absoluto para 'icon' em launcher property files.
+# Java .properties usa '\' como escape (\n, \r viram newline/CR), entao
+# usamos forward slashes no caminho absoluto.
+$dicomLauncherTmp  = Join-Path $env:TEMP "dicomizer-launcher.properties"
+$iconAbsPath       = (Join-Path $RES "Dicomizer.ico") -replace '\\', '/'
+$launcherContent   = (Get-Content (Join-Path $RES "dicomizer-launcher.properties")) `
+                         -replace '^icon=.*$', "icon=$iconAbsPath"
+[System.IO.File]::WriteAllLines($dicomLauncherTmp, $launcherContent,
+    [System.Text.UTF8Encoding]::new($false))
+
+Write-Host ""
+Write-Host "-- Gerando imagem do app com jpackage --"
 
 & $JPACKAGE `
     --type app-image `
@@ -214,40 +247,107 @@ Write-Host "`n── Gerando imagem do app com jpackage ──"
     --main-jar weasis-launcher.jar `
     --main-class org.weasis.launcher.AppLauncher `
     --add-modules $JDK_MODULES `
-    "--add-launcher" "Dicomizer=$RES\dicomizer-launcher.properties" `
+    "--add-launcher" ("Dicomizer=" + $dicomLauncherTmp) `
     --resource-dir $RES `
     --app-version $CLEAN_VERSION `
     --java-options "-Dgosh.port=17179" `
     --java-options "--enable-native-access=ALL-UNNAMED" `
     --java-options "-Djavax.accessibility.assistive_technologies=org.weasis.launcher.EmptyAccessibilityProvider" `
     --java-options "-Djavax.accessibility.screen_magnifier_present=false" `
-    "--java-options" "-splash:`$APPDIR\resources\images\about-round.png" `
+    --java-options "-splash:`$APPDIR\resources\images\about-round.png" `
     --verbose
 
-if ($LASTEXITCODE -ne 0) { Write-Error "jpackage app-image falhou (exit $LASTEXITCODE)."; exit 1 }
-Write-Host "[OK]    Imagem do app gerada em: $IMAGE_PATH"
+if ($LASTEXITCODE -ne 0) {
+    Write-Host ("ERRO: jpackage app-image falhou (exit " + $LASTEXITCODE + ").")
+    exit 1
+}
+Write-Host ("[OK]    Imagem do app gerada em: " + $IMAGE_PATH)
 
 # ---------------------------------------------------------------------------
-# Instalar venv Python dentro do app (pós-jpackage)
+# Instalar Python embeddable dentro do app (pos-jpackage)
+# Python embeddable e um runtime standalone - nao precisa de Python instalado
+# no PC do usuario final.
 # ---------------------------------------------------------------------------
-$appDir = Join-Path $Image_Path "app"
+$appDir = Join-Path $IMAGE_PATH "app"
 if (Test-Path $appDir) {
-    Write-Host "`n── Instalando ambiente Python dentro do app ──"
-    $venvDst = Join-Path $appDir "python-env"
-    $pyCmd = $null
-    foreach ($c in @("python", "python3")) {
-        try {
-            $ver = & $c -c "import sys; print(sys.version_info.major*10+sys.version_info.minor)" 2>$null
-            if ($ver -match '^\d+$' -and [int]$ver -ge 39) { $pyCmd = $c; break }
-        } catch {}
+    Write-Host ""
+    Write-Host "-- Instalando Python embeddable (runtime standalone) --"
+
+    # Cache persistente fora do dist-output (que e deletado a cada build).
+    # O install de torch/ultralytics leva 15-30 min — so roda na primeira vez.
+    $runtimeCache = Join-Path $env:LOCALAPPDATA "LabRoM\python-runtime"
+    $runtimeDir   = Join-Path $appDir "python-runtime"
+    $getPipPy     = Join-Path $env:TEMP "get-pip.py"
+
+    # Verificar cache persistente
+    $pyExeCache = Join-Path $runtimeCache "python.exe"
+    $pipCache   = Join-Path $runtimeCache "Scripts\pip.exe"
+    $torchOk = $false
+    if ((Test-Path $pyExeCache) -and (Test-Path $pipCache)) {
+        & $pyExeCache -c "import torch" 2>$null
+        $torchOk = ($LASTEXITCODE -eq 0)
     }
-    if ($pyCmd) {
-        & $pyCmd -m venv $venvDst --clear
-        & "$venvDst\Scripts\pip.exe" install --upgrade pip --quiet
-        & "$venvDst\Scripts\pip.exe" install ultralytics torch opencv-python grad-cam --quiet
-        Write-Host "[OK]    Venv Python instalado em: $venvDst"
+
+    if ($torchOk) {
+        Write-Host ("[OK]    Python cache encontrado - copiando para app (rapido)...")
+        if (Test-Path $runtimeDir) { Remove-Item -Recurse -Force $runtimeDir }
+        Copy-Item $runtimeCache $runtimeDir -Recurse -Force
     } else {
-        Write-Warning "Python 3.9+ nao encontrado. Execute setup-python.ps1 no PC de destino."
+        # Descobrir a ultima versao 3.12.x disponivel no python.org
+        $embedZip = $null
+        for ($patch = 20; $patch -ge 0; $patch--) {
+            $ver = "3.12.$patch"
+            $zip = Join-Path $env:TEMP "python-$ver-embed-amd64.zip"
+            if (Test-Path $zip) { $embedZip = $zip; break }
+            $url = "https://www.python.org/ftp/python/$ver/python-$ver-embed-amd64.zip"
+            try {
+                Invoke-WebRequest $url -OutFile $zip -UseBasicParsing -ErrorAction Stop
+                $embedZip = $zip
+                Write-Host "[INFO]  Python $ver embeddable baixado."
+                break
+            } catch { Remove-Item $zip -ErrorAction SilentlyContinue }
+        }
+        if (-not $embedZip) {
+            Write-Warning "[WARN]  Nao foi possivel baixar o Python embeddable. Verifique a conexao."
+        } else {
+            if (Test-Path $runtimeCache) { Remove-Item -Recurse -Force $runtimeCache }
+            New-Item -ItemType Directory -Force -Path $runtimeCache | Out-Null
+            Expand-Archive $embedZip $runtimeCache -Force
+
+            # Habilitar site-packages descomentando 'import site' no ._pth
+            # IMPORTANTE: usar WriteAllLines sem BOM — Set-Content UTF8 adiciona BOM que corrompe o path
+            $pthFile = Get-ChildItem $runtimeCache -Filter "python*._pth" | Select-Object -First 1
+            if ($pthFile) {
+                $pthLines = (Get-Content $pthFile.FullName) -replace '^#import site', 'import site'
+                [System.IO.File]::WriteAllLines($pthFile.FullName, $pthLines,
+                    [System.Text.UTF8Encoding]::new($false))
+            }
+
+            # Bootstrap pip
+            if (-not (Test-Path $getPipPy)) {
+                Write-Host "[INFO]  Baixando get-pip.py..."
+                Invoke-WebRequest "https://bootstrap.pypa.io/get-pip.py" `
+                    -OutFile $getPipPy -UseBasicParsing
+            }
+            & $pyExeCache $getPipPy --no-warn-script-location -q
+            if ($LASTEXITCODE -ne 0) {
+                Write-Warning "[WARN]  Falha ao instalar pip no Python embeddable."
+            }
+
+            # Instalar dependencias Python no cache
+            Write-Host "[INFO]  Instalando dependencias Python (pode demorar alguns minutos)..."
+            & $pipCache install --no-warn-script-location `
+                pillow pydicom "pylibjpeg[all]" `
+                ultralytics torch torchvision opencv-python grad-cam
+            if ($LASTEXITCODE -ne 0) {
+                Write-Warning "[WARN]  Algumas dependencias nao foram instaladas. Verifique a conexao."
+            } else {
+                Write-Host ("[OK]    Python runtime instalado em cache: " + $runtimeCache)
+                if (Test-Path $runtimeDir) { Remove-Item -Recurse -Force $runtimeDir }
+                Copy-Item $runtimeCache $runtimeDir -Recurse -Force
+                Write-Host ("[OK]    Python runtime copiado para app: " + $runtimeDir)
+            }
+        }
     }
 }
 
@@ -255,7 +355,46 @@ if (Test-Path $appDir) {
 # Gerar instalador MSI
 # ---------------------------------------------------------------------------
 if (-not $NoPackage) {
-    Write-Host "`n── Gerando instalador MSI ──"
+    Write-Host ""
+    Write-Host "-- Gerando instalador MSI --"
+
+    # Verificar WiX 4+ (necessario para gerar MSI com JDK 26+)
+    # WiX 3 (candle.exe/light.exe) e INCOMPATIVEL com JDK 26 — nao adicionar ao PATH.
+    # Apenas wix.exe (WiX 4+, instalado via dotnet tool) e suportado.
+    $env:PATH = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" +
+                [System.Environment]::GetEnvironmentVariable("Path","User") + ";" +
+                "$env:USERPROFILE\.dotnet\tools;" +
+                $env:PATH
+    $wixFound = [bool](Get-Command "wix.exe" -ErrorAction SilentlyContinue)
+    if (-not $wixFound) {
+        Write-Host "[INFO]  wix.exe nao encontrado. Instalando WiX 4.0.5 via dotnet tool (nao requer admin)..."
+        dotnet tool install --global wix --version 4.0.5
+        $env:PATH = "$env:USERPROFILE\.dotnet\tools;$env:PATH"
+        $wixFound = [bool](Get-Command "wix.exe" -ErrorAction SilentlyContinue)
+    }
+    if (-not $wixFound) {
+        Write-Host "ERRO: wix.exe nao encontrado. Instale o .NET SDK 8+ e execute:"
+        Write-Host "        dotnet tool install --global wix --version 4.0.5"
+        Write-Host "      Depois reinicie o PowerShell e execute .\distribute.ps1 novamente."
+        exit 1
+    }
+    $wixVer = (& wix.exe --version 2>$null)
+    Write-Host ("[OK]    WiX: " + $wixVer)
+
+    # Garantir que as extensoes WiX necessarias estao instaladas
+    $extList = (& wix.exe extension list --global 2>$null) | Out-String
+    foreach ($ext in @("WixToolset.Util.wixext", "WixToolset.UI.wixext")) {
+        $ver405 = $ext + "/4.0.5"
+        if ($extList -notmatch [regex]::Escape($ext + " 4.0.5")) {
+            Write-Host ("[INFO]  Instalando extensao WiX: " + $ext + " ...")
+            & wix.exe extension remove --global $ext 2>$null
+            & wix.exe extension add --global ($ext + "/4.0.5")
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host ("ERRO: Falha ao instalar extensao WiX '" + $ext + "'.")
+                exit 1
+            }
+        }
+    }
 
     $UPGRADE_UID = if ($arc -eq "aarch64") {
         "3aedc24e-48a8-4623-ab39-0c3c01c7383c"
@@ -278,23 +417,25 @@ if (-not $NoPackage) {
         --win-upgrade-uuid $UPGRADE_UID `
         --win-menu `
         --win-menu-group "Weasis" `
-        --copyright "© 2009-2026 Weasis Team" `
+        --copyright "2009-2026 Weasis Team" `
         --app-version $CLEAN_VERSION `
         --vendor "Weasis Team" `
         --file-associations $fileAssoc `
         --verbose
 
-    if ($LASTEXITCODE -ne 0) { Write-Error "jpackage MSI falhou (exit $LASTEXITCODE)."; exit 1 }
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host ("ERRO: jpackage MSI falhou (exit " + $LASTEXITCODE + ").")
+        exit 1
+    }
 
-    # Renomear para incluir arquitetura
     $msi = Get-ChildItem $Output -Filter "Weasis-*.msi" | Select-Object -First 1
     if ($msi) {
-        $newName = $msi.Name -replace "\.msi$", "-$arc.msi"
+        $newName = $msi.Name -replace "\.msi$", ("-" + $arc + ".msi")
         Rename-Item $msi.FullName (Join-Path $Output $newName)
-        Write-Host "[OK]    Instalador MSI: $newName"
+        Write-Host ("[OK]    Instalador MSI: " + $newName)
     }
 }
 
 Write-Host ""
-Write-Host "[OK]    Concluido! Artefatos em: $Output"
+Write-Host ("[OK]    Concluido! Artefatos em: " + $Output)
 Get-ChildItem $Output -ErrorAction SilentlyContinue | Format-Table Name, Length, LastWriteTime
