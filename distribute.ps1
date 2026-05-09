@@ -216,8 +216,14 @@ if ($machine -ne "windows") {
 # O weasis-native nao e um repositorio git e pode ser sobrescrito pelo
 # run_weasis.ps1 — guardamos os arquivos corrigidos dentro do LabRoM_IML.
 # ---------------------------------------------------------------------------
-$labromRoot = $PSScriptRoot
-if ($SCRIPT_DIR -ne $PSScriptRoot) { $labromRoot = $PSScriptRoot }
+# Se o script foi copiado para weasis-native pelo run_weasis.ps1, PSScriptRoot
+# aponta para weasis-native. Procura LabRoM_IML no diretorio irma­o.
+$labromRoot = if (Test-Path (Join-Path $PSScriptRoot "assets")) {
+    $PSScriptRoot
+} else {
+    $candidate = Join-Path (Split-Path $PSScriptRoot -Parent) "LabRoM_IML"
+    if (Test-Path $candidate) { $candidate } else { $PSScriptRoot }
+}
 foreach ($arc_ in @("x86-64", "aarch64")) {
     $src_ = Join-Path $labromRoot "build\msi\$arc_\main.wxs"
     $dst_ = Join-Path $SCRIPT_DIR "build\script\resources\windows\msi\$arc_\main.wxs"
