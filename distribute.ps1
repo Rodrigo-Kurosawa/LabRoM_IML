@@ -21,6 +21,7 @@ param(
 )
 
 $SCRIPT_DIR   = $PSScriptRoot
+$APP_NAME     = "LabRoM_IML"
 
 # distribute.ps1 pode ser executado de LabRoM_IML/ ou de weasis-native/.
 # Detecta automaticamente qual dos dois tem bin-dist.
@@ -231,7 +232,41 @@ foreach ($arc_ in @("x86-64", "aarch64")) {
 # ---------------------------------------------------------------------------
 $RES        = Join-Path $SCRIPT_DIR "build\script\resources\windows"
 $INPUT_DIR  = Join-Path $BIN_DIST "weasis"
-$IMAGE_PATH = Join-Path $Output "Weasis"
+$IMAGE_PATH = Join-Path $Output $APP_NAME
+
+# ---------------------------------------------------------------------------
+# Injetar icone customizado (assets\icon.png -> $APP_NAME.ico e Dicomizer.ico)
+# jpackage usa automaticamente o .ico cujo nome coincide com --name no resource-dir.
+# ---------------------------------------------------------------------------
+$icoPath     = Join-Path $RES "$APP_NAME.ico"
+$dcomIcoPath = Join-Path $RES "Dicomizer.ico"
+$iconSrc     = Join-Path $labromRoot "assets\icon.png"
+if (Test-Path $iconSrc) {
+    $magick = Get-Command magick -ErrorAction SilentlyContinue
+    if ($magick) {
+        Write-Host "-- Gerando icone customizado ($APP_NAME.ico) --"
+        foreach ($dst in @($icoPath, $dcomIcoPath)) {
+            & magick $iconSrc -background black -gravity center `
+                "(" -clone 0 -resize 16x16   -extent 16x16   ")" `
+                "(" -clone 0 -resize 32x32   -extent 32x32   ")" `
+                "(" -clone 0 -resize 48x48   -extent 48x48   ")" `
+                "(" -clone 0 -resize 64x64   -extent 64x64   ")" `
+                "(" -clone 0 -resize 128x128 -extent 128x128 ")" `
+                "(" -clone 0 -resize 256x256 -extent 256x256 ")" `
+                -delete 0 $dst 2>$null
+            Write-Host ("[OK]    Icone -> " + (Split-Path $dst -Leaf))
+        }
+    } else {
+        Write-Warning "[WARN]  ImageMagick nao encontrado -- icone customizado nao gerado."
+        Write-Warning "        Instale: winget install ImageMagick.ImageMagick"
+        if (Test-Path (Join-Path $RES "Weasis.ico")) {
+            Copy-Item (Join-Path $RES "Weasis.ico") $icoPath -Force
+        }
+    }
+} elseif (Test-Path (Join-Path $RES "Weasis.ico")) {
+    Copy-Item (Join-Path $RES "Weasis.ico") $icoPath -Force
+    Write-Host "[INFO]  assets\icon.png nao encontrado - usando Weasis.ico como fallback."
+}
 
 $CLEAN_VERSION = $WEASIS_VERSION -replace '-[^.]*$', '' -replace '(\d+\.\d+\.\d+)\.\d+', '$1'
 
@@ -259,7 +294,7 @@ Write-Host "-- Gerando imagem do app com jpackage --"
     --type app-image `
     --input  $INPUT_DIR `
     --dest   $Output `
-    --name   "Weasis" `
+    --name   $APP_NAME `
     --main-jar weasis-launcher.jar `
     --main-class org.weasis.launcher.AppLauncher `
     --add-modules $JDK_MODULES `
@@ -426,13 +461,13 @@ if (-not $NoPackage) {
         --type msi `
         --app-image $IMAGE_PATH `
         --dest $Output `
-        --name "Weasis" `
+        --name $APP_NAME `
         --resource-dir $msiResDir `
         --license-file $licenseFile `
-        --description "Weasis DICOM viewer" `
+        --description "$APP_NAME DICOM viewer" `
         --win-upgrade-uuid $UPGRADE_UID `
         --win-menu `
-        --win-menu-group "Weasis" `
+        --win-menu-group $APP_NAME `
         --copyright "2009-2026 Weasis Team" `
         --app-version $CLEAN_VERSION `
         --vendor "Weasis Team" `
@@ -444,7 +479,7 @@ if (-not $NoPackage) {
         exit 1
     }
 
-    $msi = Get-ChildItem $Output -Filter "Weasis-*.msi" | Select-Object -First 1
+    $msi = Get-ChildItem $Output -Filter "$APP_NAME-*.msi" | Select-Object -First 1
     if ($msi) {
         $newName = $msi.Name -replace "\.msi$", ("-" + $arc + ".msi")
         Rename-Item $msi.FullName (Join-Path $Output $newName)
