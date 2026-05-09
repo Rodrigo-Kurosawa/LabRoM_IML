@@ -391,6 +391,10 @@ if (Test-Path $appDir) {
                 Write-Warning "[WARN]  Falha ao instalar pip no Python embeddable."
             }
 
+            # Python embeddable nao inclui setuptools/wheel — necessarios para
+            # pacotes que compilam extensoes (ex: pylibjpeg).
+            & $pipCache install --no-warn-script-location setuptools wheel -q
+
             # Instalar dependencias Python no cache
             Write-Host "[INFO]  Instalando dependencias Python (pode demorar alguns minutos)..."
             & $pipCache install --no-warn-script-location `
