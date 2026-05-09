@@ -32,6 +32,7 @@ import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
+import javax.swing.Timer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.weasis.core.api.gui.Insertable;
@@ -40,6 +41,9 @@ import org.weasis.core.api.media.data.MediaReader;
 import org.weasis.core.api.media.data.MediaSeries;
 import org.weasis.core.ui.docking.PluginTool;
 import org.weasis.core.ui.editor.ViewerPluginBuilder;
+import org.weasis.core.ui.editor.image.DefaultView2d;
+import org.weasis.core.ui.editor.image.ViewCanvas;
+import org.weasis.dicom.viewer2d.EventManager;
 import org.weasis.core.ui.editor.image.DefaultView2d;
 import org.weasis.core.ui.editor.image.ViewCanvas;
 import org.weasis.dicom.viewer2d.EventManager;
@@ -62,6 +66,12 @@ public class SexClassifierTool extends PluginTool {
           tool.setStatus("\u2717 " + result.error, Color.RED.darker());
         }
       });
+    }
+  }
+
+  public static void pushStatus(String message) {
+    for (SexClassifierTool tool : INSTANCES) {
+      SwingUtilities.invokeLater(() -> tool.setStatus(message, Color.GRAY));
     }
   }
 

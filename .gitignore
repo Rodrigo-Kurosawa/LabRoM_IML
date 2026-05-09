@@ -37,6 +37,14 @@ hs_err*.log
 *.iml
 
 # ========================
+# Local / generated
+# ========================
+.claude/
+jdk-*/
+bin-dist/
+dist-output/
+
+# ========================
 # Mac temp folders
 # ========================
 _*/
