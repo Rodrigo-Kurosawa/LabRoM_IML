@@ -32,8 +32,8 @@ import org.slf4j.LoggerFactory;
  *
  * <h3>Pixel extraction</h3>
  * <p>
- * SC DICOM pixel data is extracted via the bundled {@code dicom_extract_pixels.py}
- * script (pydicom + Pillow). Pillow's libjpeg backend reads JFIF APP0 / Adobe APP14
+ * SC DICOM pixel data is extracted via the persistent {@link PythonWorker}
+ * (pydicom + Pillow). Pillow's libjpeg backend reads JFIF APP0 / Adobe APP14
  * colour-space markers, so YCbCr→RGB conversion is handled correctly without any
  * statistical heuristics that can misfire.
  */
@@ -338,115 +338,38 @@ public final class DicomExtractor {
   // ───────────────────────────────────────────────────────────────────────────
 
   /**
-   * Calls the bundled {@code dicom_extract_pixels.py} via Python to extract
-   * pixels from {@code files} that Java could not decode (JPEG Lossless, etc.).
+   * Extracts pixels from {@code files} via the persistent {@link PythonWorker}.
    *
-   * @param files     list of SC DICOM files Java failed to decode
-   * @param outputDir destination directory for PNGs
+   * @param files     list of SC DICOM files
+   * @param outputDir destination directory for the final {@code sc_NNNN.png} files
    * @param startIdx  index to start naming files from (sc_XXXX.png)
    * @return list of successfully extracted PNG files
    */
   static List<File> extractWithPython(List<File> files, File outputDir, int startIdx) {
     List<File> result = new ArrayList<>();
 
-    String python = findPython();
-    if (python == null) {
-      LOGGER.warn("python3 not found — cannot extract JPEG Lossless pixels.");
-      return result;
-    }
-
-    File scriptFile = extractBundledScript("dicom_extract_pixels.py");
-    if (scriptFile == null) {
-      LOGGER.warn("Could not extract bundled dicom_extract_pixels.py");
-      return result;
-    }
-
     File tmpOut = new File(outputDir, "python_tmp");
     tmpOut.mkdirs();
 
-    List<String> cmd = new ArrayList<>();
-    cmd.add(python);
-    cmd.add(scriptFile.getAbsolutePath());
-    cmd.add(tmpOut.getAbsolutePath());
-    for (File f : files)
-      cmd.add(f.getAbsolutePath());
+    LOGGER.info("Extracting {} SC file(s) via PythonWorker", files.size());
+    PythonWorker.ExtractResult er =
+        PythonWorker.getInstance().extractDicom(files, tmpOut);
 
-    LOGGER.info("Calling Python for {} SC file(s): {}", files.size(), scriptFile.getName());
-
-    try {
-      ProcessBuilder pb = new ProcessBuilder(cmd);
-      // ── CRITICAL: merge stderr into stdout to prevent pipe-buffer deadlock ──
-      pb.redirectErrorStream(true);
-      Process proc = pb.start();
-
-      // Read merged stdout+stderr; "OK:" and "FAIL:" lines are from the script;
-      // everything else is Python logging (warnings, etc.) → log at DEBUG
-      try (java.io.BufferedReader br = new java.io.BufferedReader(
-          new java.io.InputStreamReader(proc.getInputStream()))) {
-        int idx = startIdx;
-        String line;
-        while ((line = br.readLine()) != null) {
-          if (line.startsWith("OK:")) {
-            File src = new File(line.substring(3).trim());
-            if (src.exists()) {
-              File dest = new File(outputDir, String.format("sc_%04d.png", idx++));
-              if (src.renameTo(dest) || copyFile(src, dest))
-                result.add(dest);
-            }
-          } else if (line.startsWith("FAIL:")) {
-            String reason = line.substring(5).trim();
-            LOGGER.warn("Python extraction: {}", reason);
-            if (lastFailReason == null) lastFailReason = reason;
-          } else {
-            LOGGER.debug("[py] {}", line); // warnings, imports, etc.
-          }
-        }
+    int idx = startIdx;
+    for (File src : er.ok) {
+      File dest = new File(outputDir, String.format("sc_%04d.png", idx++));
+      if (src.renameTo(dest) || copyFile(src, dest)) {
+        result.add(dest);
       }
-
-      boolean finished = proc.waitFor(180, java.util.concurrent.TimeUnit.SECONDS);
-      if (!finished) {
-        LOGGER.warn("Python extraction timed out after 180 s — destroying process.");
-        proc.destroyForcibly();
-      } else {
-        LOGGER.info("Python extraction finished (exit={}), {} images.", proc.exitValue(), result.size());
-      }
-      deleteDirQuietly(tmpOut);
-
-    } catch (Exception e) {
-      LOGGER.error("Python pixel extraction failed", e);
+    }
+    for (String reason : er.failures) {
+      if (lastFailReason == null) lastFailReason = reason;
     }
 
+    LOGGER.info("Python extraction finished, {} image(s), {} failure(s).",
+        result.size(), er.failures.size());
+    deleteDirQuietly(tmpOut);
     return result;
-  }
-
-  /**
-   * Extracts a resource from the plugin JAR to a temp file (same pattern as
-   * PivotDetector).
-   */
-  private static File extractBundledScript(String resourceName) {
-    // Use leading "/" as PivotDetector does — works in OSGi
-    try (java.io.InputStream in = DicomExtractor.class.getResourceAsStream("/" + resourceName)) {
-      if (in != null) {
-        java.nio.file.Path tmp = java.nio.file.Files.createTempFile("sc_extract_", ".py");
-        java.nio.file.Files.copy(in, tmp, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-        tmp.toFile().deleteOnExit();
-        return tmp.toFile();
-      }
-    } catch (Exception e) {
-      LOGGER.debug("getResourceAsStream failed for {}: {}", resourceName, e.getMessage());
-    }
-
-    // Fallback: look next to the JAR file
-    try {
-      File jarDir = new File(DicomExtractor.class.getProtectionDomain()
-          .getCodeSource().getLocation().toURI()).getParentFile();
-      File next = new File(jarDir, resourceName);
-      if (next.exists())
-        return next;
-    } catch (Exception ignored) {
-    }
-
-    return null;
   }
 
   /**

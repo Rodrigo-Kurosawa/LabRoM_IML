@@ -63,6 +63,13 @@ public class SexClassifierToolBarFactory implements InsertableFactory {
   @Activate
   protected void activate(ComponentContext context) {
     LOGGER.info("Sex Classification toolbar activated");
+    // Kick the Python worker, load torch/ultralytics and both models on a
+    // background daemon thread so the first Classify click does not freeze
+    // the UI for ~10 s. Idempotent — safe even though the side-panel factory
+    // could call this too.
+    PythonWorker.getInstance().prewarm(
+        PivotDetector.findModelPath(),
+        SexClassifier.findModelPath());
   }
 
   @Deactivate

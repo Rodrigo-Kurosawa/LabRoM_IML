@@ -1,21 +1,14 @@
 /*
  * Sex Classification Plugin – LabRoM_IML
  *
- * PivotDetector: calls the bundled pivo_inference.py script (ResNet-50 only)
- * and saves the pivot window images in pure Java.
- *
- * Python is kept ONLY for the ResNet-50 inference (PyTorch/torchvision).
- * All file I/O, image manipulation and window slicing are done in Java.
+ * PivotDetector: routes ResNet-50 pivot detection through the persistent
+ * {@link PythonWorker}, then slices and saves the result window in pure Java.
  */
 package org.weasis.sex.classifier;
 
-import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.nio.file.Files;
-import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
@@ -25,12 +18,9 @@ import org.slf4j.LoggerFactory;
 /**
  * Finds the pivot image among a set of Secondary Capture PNGs.
  *
- * <p>The ResNet-50 inference runs via a minimal Python script
- * ({@code pivo_inference.py}) bundled as a resource inside the plugin JAR.
- * Everything else (file enumeration, window slicing, image saving) is Java.
- *
- * <p>Replaces {@code pivo_extractor.py} partially – Python handles only the
- * model forward pass.
+ * <p>The ResNet-50 inference runs in the long-lived {@link PythonWorker} so
+ * the import / model-load cost is amortized across the whole Weasis session.
+ * File enumeration, window slicing, and image saving stay in Java.
  */
 public final class PivotDetector {
 
@@ -39,12 +29,19 @@ public final class PivotDetector {
   /** How many images before and after the pivot to include in the result window */
   public static final int WINDOW_RADIUS = 5;
 
-  /** Name of the bundled inference script inside src/main/resources */
-  private static final String INFERENCE_SCRIPT = "pivo_inference.py";
+  /**
+   * Stride used when scanning a series for the pivot frame. With stride=2 we
+   * run ResNet inference on every other image; the picked index is at worst
+   * one slice off the true pivot, which is invisible at WINDOW_RADIUS=5
+   * because the window still contains the true pivot and 4–6 neighbours on
+   * each side. Set to 1 to disable (scan every image).
+   */
+  private static final int PIVOT_STRIDE = 2;
 
   private static final String MODEL_FILENAME = "pivo.pt";
 
-  private PivotDetector() {}
+  private PivotDetector() {
+  }
 
   // ───────────────────────────────────────────────────────────────────────────
   // Public API
@@ -60,7 +57,7 @@ public final class PivotDetector {
    * @return list of result image files, or empty list on failure
    */
   public static List<File> detectAndSaveWindow(List<File> images, File outputDir, String modelPath)
-      throws IOException, InterruptedException {
+      throws IOException {
 
     if (images.isEmpty()) return new ArrayList<>();
     outputDir.mkdirs();
@@ -69,10 +66,10 @@ public final class PivotDetector {
       modelPath = findModelPath();
     }
 
-    // ── 1. Find pivot via Python ResNet-50 ────────────────────────────────────
+    // ── 1. Find pivot via PythonWorker (ResNet-50) ───────────────────────────
     int pivotIndex;
     if (new File(modelPath).exists()) {
-      pivotIndex = runPythonInference(images, modelPath);
+      pivotIndex = runPivotInference(images, modelPath);
     } else {
       LOGGER.warn("Model not found at '{}'. Falling back to center image.", modelPath);
       pivotIndex = images.size() / 2;
@@ -83,92 +80,57 @@ public final class PivotDetector {
   }
 
   // ───────────────────────────────────────────────────────────────────────────
-  // Python bridge – only for ResNet-50 inference
+  // Python bridge – delegates to the persistent worker
   // ───────────────────────────────────────────────────────────────────────────
 
   /**
-   * Runs the bundled {@code pivo_inference.py} with all image paths as args.
+   * Runs the bundled ResNet-50 pivot inference via the persistent worker and
+   * returns the index of the image with the highest pivot probability.
+   * Falls back to the centre image if the worker has no result.
    *
-   * <p>Protocol: the script prints one line per image:
-   * {@code <index> <probability>}
-   * and exits 0. We pick the index with max probability.
-   *
-   * @return index of the pivot image within {@code images}
+   * <p>Inference is only run on every {@code PIVOT_STRIDE}-th image to halve
+   * the work. The picked index is mapped back to its position in the full
+   * series before being returned, so the caller and the window-slicing code
+   * are unaffected.
    */
-  private static int runPythonInference(List<File> images, String modelPath)
-      throws IOException, InterruptedException {
-
-    // Extract the bundled script to a temp file
-    File scriptFile = extractScript();
-
-    String python = findPython();
-    if (python == null) {
-      LOGGER.warn("python3 not found. Falling back to center image.");
-      return images.size() / 2;
+  private static int runPivotInference(List<File> images, String modelPath) {
+    // Build the strided sublist and keep a mapping back to original indices.
+    List<File>    strided        = new ArrayList<>();
+    List<Integer> stridedToOrig  = new ArrayList<>();
+    for (int i = 0; i < images.size(); i += PIVOT_STRIDE) {
+      strided.add(images.get(i));
+      stridedToOrig.add(i);
     }
 
-    // Build command: python3 pivo_inference.py <model> <img0> <img1> ...
-    List<String> cmd = new ArrayList<>();
-    cmd.add(python);
-    cmd.add(scriptFile.getAbsolutePath());
-    cmd.add(modelPath);
-    for (File img : images) {
-      cmd.add(img.getAbsolutePath());
-    }
+    LOGGER.info("Running pivot inference on {}/{} image(s) (stride={}) via PythonWorker",
+        strided.size(), images.size(), PIVOT_STRIDE);
 
-    LOGGER.info("Running pivot inference on {} images", images.size());
-    ProcessBuilder pb = new ProcessBuilder(cmd);
-    pb.redirectErrorStream(true); // merge stderr→stdout to avoid pipe-buffer deadlock on Windows
-    Process proc = pb.start();
+    List<PythonWorker.PivotProb> probs =
+        PythonWorker.getInstance().runPivotInference(strided, modelPath);
 
-    // Read stdout → pick best index (stderr lines are non-numeric and caught below)
-    int bestIndex = images.size() / 2;
-    double bestProb = -1.0;
-    try (BufferedReader reader =
-        new BufferedReader(new InputStreamReader(proc.getInputStream()))) {
-      String line;
-      while ((line = reader.readLine()) != null) {
-        line = line.trim();
-        if (line.isEmpty()) continue;
-        try {
-          String[] parts = line.split("\\s+");
-          int idx = Integer.parseInt(parts[0]);
-          double prob = Double.parseDouble(parts[1]);
-          LOGGER.debug("  [inference] idx={} prob={}", idx, prob);
-          if (prob > bestProb) {
-            bestProb = prob;
-            bestIndex = idx;
-          }
-        } catch (NumberFormatException ignored) {
-          LOGGER.debug("  [inference raw] {}", line);
-        }
+    int    bestStridedIdx = strided.size() / 2;
+    double bestProb       = -1.0;
+    for (PythonWorker.PivotProb pp : probs) {
+      int origIdx = (pp.index >= 0 && pp.index < stridedToOrig.size())
+          ? stridedToOrig.get(pp.index) : pp.index;
+      LOGGER.debug("  [inference] orig_idx={} prob={}", origIdx, pp.prob);
+      if (pp.prob > bestProb) {
+        bestProb       = pp.prob;
+        bestStridedIdx = pp.index;
       }
     }
 
-    int exitCode = proc.waitFor();
-    if (exitCode != 0) {
-      LOGGER.warn("Inference script exited with code {}. Using index {}.", exitCode, bestIndex);
+    int bestOrigIdx = (bestStridedIdx >= 0 && bestStridedIdx < stridedToOrig.size())
+        ? stridedToOrig.get(bestStridedIdx) : images.size() / 2;
+
+    if (bestProb < 0) {
+      LOGGER.warn("Pivot inference returned no probabilities. Using centre index {}.",
+          bestOrigIdx);
     } else {
-      LOGGER.info("Pivot found at index {} (prob={})", bestIndex, String.format("%.3f", bestProb));
+      LOGGER.info("Pivot found at original index {} (prob={})",
+          bestOrigIdx, String.format("%.3f", bestProb));
     }
-
-    scriptFile.deleteOnExit();
-    return bestIndex;
-  }
-
-  /**
-   * Extracts {@code pivo_inference.py} from the plugin JAR to a temp file.
-   */
-  private static File extractScript() throws IOException {
-    try (InputStream is =
-        PivotDetector.class.getResourceAsStream("/" + INFERENCE_SCRIPT)) {
-      if (is == null) {
-        throw new IOException("Bundled script not found: " + INFERENCE_SCRIPT);
-      }
-      Path tmp = Files.createTempFile("pivo_inference_", ".py");
-      Files.copy(is, tmp, StandardCopyOption.REPLACE_EXISTING);
-      return tmp.toFile();
-    }
+    return bestOrigIdx;
   }
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -206,20 +168,14 @@ public final class PivotDetector {
   }
 
   // ───────────────────────────────────────────────────────────────────────────
-  // Helpers
+  // Model-path resolution
   // ───────────────────────────────────────────────────────────────────────────
 
-  /** Delegates to the canonical finder in {@link DicomExtractor}. */
-  private static String findPython() {
-    return DicomExtractor.findPython();
-  }
-
   /**
-   * Discovers {@code pivo.pt} using three strategies (in order):
+   * Discovers {@code pivo.pt} using two strategies (in order):
    * <ol>
    *   <li>JAR-relative: {@code <jar>/../models/pivo.pt} (works in dev / target/)</li>
    *   <li>Working-directory-relative: {@code models/pivo.pt}</li>
-   *   <li>Absolute path to the LabRoM_IML repository models directory</li>
    * </ol>
    */
   static String findModelPath() {
@@ -233,7 +189,8 @@ public final class PivotDetector {
         LOGGER.info("{} found (JAR-relative): {}", MODEL_FILENAME, candidate);
         return candidate.getAbsolutePath();
       }
-    } catch (Exception ignore) {}
+    } catch (Exception ignore) {
+    }
 
     // 2. models/ relative to working directory
     File cwd = new File(System.getProperty("user.dir"), "models/" + MODEL_FILENAME);

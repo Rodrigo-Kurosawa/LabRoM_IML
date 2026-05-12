@@ -84,6 +84,11 @@ public final class SexClassifierAction {
   // Pipeline
   // ───────────────────────────────────────────────────────────────────────────
 
+  private static final String AI_UNAVAILABLE_MSG =
+      "AI service unavailable.<br>"
+      + "The Python inference worker crashed and could not be restarted.<br>"
+      + "Please restart Weasis.";
+
   private static PipelineResult runPipeline(List<File> viewerFiles, String modelPath) {
     if (viewerFiles == null || viewerFiles.isEmpty()) {
       return PipelineResult.error("No files found in the viewer.");
@@ -114,6 +119,12 @@ public final class SexClassifierAction {
       List<File> pngs = DicomExtractor.extractSecondaryCaptures(viewerFiles, scDir);
 
       if (pngs.isEmpty()) {
+        // If the Python worker is dead and respawn was exhausted, the empty
+        // result is almost certainly caused by that — show the clearer
+        // "AI service unavailable" message instead of the generic diagnostic.
+        if (PythonWorker.getInstance().isPermanentlyDead()) {
+          return PipelineResult.error(AI_UNAVAILABLE_MSG);
+        }
         // Build a diagnostic error message
         int total = DicomExtractor.lastTotal;
         int dicom = DicomExtractor.lastDicom;
@@ -151,6 +162,9 @@ public final class SexClassifierAction {
       List<File> pivotImages = PivotDetector.detectAndSaveWindow(pngs, pivoDir, modelPath);
 
       if (pivotImages.isEmpty()) {
+        if (PythonWorker.getInstance().isPermanentlyDead()) {
+          return PipelineResult.error(AI_UNAVAILABLE_MSG);
+        }
         return PipelineResult.error("Pivot detection produced no images.");
       }
 
@@ -163,6 +177,9 @@ public final class SexClassifierAction {
 
       if (!classification.isSuccess()) {
         LOGGER.warn("Classification failed: {}", classification.error);
+        if (PythonWorker.getInstance().isPermanentlyDead()) {
+          return PipelineResult.error(AI_UNAVAILABLE_MSG);
+        }
       }
 
       // Step 5: Build side-by-side composites (pivot | heatmap) for synchronized viewing
@@ -174,9 +191,6 @@ public final class SexClassifierAction {
       String patientId = extractPatientId(viewerFiles);
       return PipelineResult.success(pivoDir, pivotImages, classification, composites, patientId);
 
-    } catch (InterruptedException ie) {
-      Thread.currentThread().interrupt();
-      return PipelineResult.error("Pipeline interrupted.");
     } catch (Exception e) {
       LOGGER.error("Pipeline error", e);
       return PipelineResult.error("Pipeline error: " + e.getMessage());

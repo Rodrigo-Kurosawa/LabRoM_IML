@@ -249,10 +249,14 @@ $dcomIcoPath = Join-Path $RES "Dicomizer.ico"
 $iconSrc     = Join-Path $labromRoot "assets\icon.png"
 if (Test-Path $iconSrc) {
     $magick = Get-Command magick -ErrorAction SilentlyContinue
+    if (-not $magick) {
+        $magickFallback = "C:\Program Files\ImageMagick-7.1.2-Q16-HDRI\magick.exe"
+        if (Test-Path $magickFallback) { $magick = $magickFallback }
+    }
     if ($magick) {
         Write-Host "-- Gerando icone customizado ($APP_NAME.ico) --"
         foreach ($dst in @($icoPath, $dcomIcoPath)) {
-            & magick $iconSrc -background black -gravity center `
+            & $magick $iconSrc -background black -gravity center `
                 "(" -clone 0 -resize 16x16   -extent 16x16   ")" `
                 "(" -clone 0 -resize 32x32   -extent 32x32   ")" `
                 "(" -clone 0 -resize 48x48   -extent 48x48   ")" `
