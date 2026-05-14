@@ -46,7 +46,7 @@ O programa é **autossuficiente**: ele já vem com tudo o que precisa por dentro
 Você vai receber um arquivo com extensão **`.msi`**, com nome parecido com:
 
 ```
-Weasis-x.y.z.msi
+LabRoM_IML-x.y.z.msi
 ```
 
 Salve-o em algum local fácil de encontrar (por exemplo, na Área de Trabalho).
@@ -76,13 +76,13 @@ A instalação leva 1 a 2 minutos.
 
 ### Passo 5 — Instalação concluída
 
-Vai aparecer um ícone chamado **Weasis** na Área de Trabalho e no menu Iniciar.
+Vai aparecer um ícone chamado **LabRoM_IML** na Área de Trabalho e no menu Iniciar.
 
 ---
 
 ## 4. Primeira execução
 
-Dê duplo clique no ícone **Weasis** na Área de Trabalho.
+Dê duplo clique no ícone **LabRoM_IML** na Barra de Busca do Windows ou na Área de Trabalho.
 
 > **Importante:** *na primeira vez* que você abrir o programa, ele pode levar
 > alguns segundos a mais (o Windows costuma verificar todos os componentes
@@ -222,7 +222,7 @@ Os resultados anteriores ficam no painel lateral até você fechar o programa.
 ## 9. Salvar os resultados (Export Heatmap)
 
 **Atenção:** os resultados **não são salvos automaticamente** em disco — se
-você fechar o Weasis sem exportar, eles são perdidos. Para guardar o resultado
+você fechar o LabRoM_IML sem exportar, eles são perdidos. Para guardar o resultado
 para prontuário ou laudo, use o botão **Export Heatmap** no cartão do
 painel lateral direito.
 
@@ -283,7 +283,7 @@ peça ajuda da equipe técnica.
 
 ### O botão "Sex Classification" não aparece
 
-- Confirme que você abriu o **Weasis** instalado (e não outra versão do Weasis).
+- Confirme que você abriu o **LabRoM_IML** instalado (e não outra versão do Weasis).
 - Tente fechar e abrir de novo.
 
 ### O computador trava ou fica muito lento durante a análise
@@ -294,7 +294,7 @@ A IA usa bastante memória RAM enquanto processa. Feche outros programas pesados
 ### Como desinstalar
 
 Vai em **Configurações do Windows → Aplicativos → Aplicativos instalados**,
-procure por **Weasis**, clique nos três pontinhos e selecione **Desinstalar**.
+procure por **LabRoM_IML**, clique nos três pontinhos e selecione **Desinstalar**.
 
 ---
 

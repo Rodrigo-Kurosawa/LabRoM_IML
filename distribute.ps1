@@ -480,6 +480,7 @@ if (-not $NoPackage) {
         --license-file $licenseFile `
         --description "$APP_NAME DICOM viewer" `
         --win-upgrade-uuid $UPGRADE_UID `
+        --win-shortcut `
         --win-menu `
         --win-menu-group $APP_NAME `
         --copyright "2009-2026 Weasis Team" `
