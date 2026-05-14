@@ -128,16 +128,23 @@ Com a série DICOM aberta no visualizador:
 
 1. Localize o botão **"Sex Classification"** na barra de ferramentas superior.
 2. Clique nele **uma única vez**.
-3. O botão muda para **"…"** indicando que o programa está processando.
+3. O botão fica desabilitado e mostra um **círculo girando** (indicador de
+   carregamento) — isso indica que o programa está processando. **Não clique
+   novamente.**
 4. Aguarde. O processamento leva de **alguns segundos a cerca de 1 minuto**,
    dependendo do tamanho da série.
 
-Enquanto processa, no painel lateral aparecem mensagens informativas como:
+Enquanto processa, o **painel lateral direito** mostra um círculo animado
+maior, centralizado, com uma mensagem de status logo abaixo, que vai mudando
+conforme o programa avança nas etapas:
 
 - *Scanning DICOM images…* — lendo as imagens
-- *Detecting pivot frame…* — escolhendo o melhor quadro
-- *Running sex classification…* — fazendo a classificação
+- *Detecting pivot frame (loading model)…* — escolhendo o melhor quadro
+- *Running sex classification (loading model)…* — fazendo a classificação
 - *Building result images…* — montando o resultado
+
+Quando termina, o spinner do painel lateral some e o cartão de resultado
+aparece no lugar.
 
 ---
 
