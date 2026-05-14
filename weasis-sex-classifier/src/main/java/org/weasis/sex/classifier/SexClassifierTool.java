@@ -7,8 +7,13 @@
 package org.weasis.sex.classifier;
 
 import bibliothek.gui.dock.common.CLocation;
+import java.awt.BasicStroke;
 import java.awt.BorderLayout;
+import java.awt.CardLayout;
 import java.awt.Color;
+import java.awt.Graphics;
+import java.awt.Graphics2D;
+import java.awt.RenderingHints;
 import java.awt.Component;
 import java.awt.Cursor;
 import java.awt.Dimension;
@@ -60,6 +65,7 @@ public class SexClassifierTool extends PluginTool {
   public static void pushResult(SexClassifierAction.PipelineResult result) {
     for (SexClassifierTool tool : INSTANCES) {
       SwingUtilities.invokeLater(() -> {
+        tool.hideLoading();
         if (result.success) {
           tool.showResult(result);
         } else {
@@ -75,11 +81,20 @@ public class SexClassifierTool extends PluginTool {
     }
   }
 
+  public static void pushLoading() {
+    for (SexClassifierTool tool : INSTANCES) {
+      SwingUtilities.invokeLater(() -> tool.showLoading("Processing\u2026"));
+    }
+  }
+
   // ── UI fields ─────────────────────────────────────────────────────────────
-  private final JPanel     mainPanel;
-  private final JLabel     statusLabel  = new JLabel(" ", SwingConstants.CENTER);
-  private final JPanel     cardsPanel   = new JPanel();
+  private final JPanel      mainPanel;
+  private final JLabel      statusLabel  = new JLabel(" ", SwingConstants.CENTER);
+  private final JPanel      cardsPanel   = new JPanel();
   private final JScrollPane cardsScroll;
+  private final LoadingPanel loadingPanel = new LoadingPanel();
+  private final JPanel       centerCard   = new JPanel(new CardLayout());
+  private boolean            loading      = false;
 
   public SexClassifierTool() {
     super(BUTTON_NAME, Insertable.Type.TOOL, 25);
@@ -114,8 +129,11 @@ public class SexClassifierTool extends PluginTool {
     top.add(Box.createVerticalStrut(4));
     top.add(statusLabel);
 
-    mainPanel.add(top, BorderLayout.NORTH);
-    mainPanel.add(cardsScroll, BorderLayout.CENTER);
+    centerCard.add(cardsScroll,   "results");
+    centerCard.add(loadingPanel,  "loading");
+
+    mainPanel.add(top,        BorderLayout.NORTH);
+    mainPanel.add(centerCard, BorderLayout.CENTER);
   }
 
   // ── PluginTool ────────────────────────────────────────────────────────────
@@ -447,10 +465,91 @@ public class SexClassifierTool extends PluginTool {
   }
 
   void setStatus(String text, Color color) {
-    statusLabel.setText(text);
-    statusLabel.setForeground(color);
-    statusLabel.repaint();
+    if (loading && text != null && !text.isBlank()) {
+      loadingPanel.setMessage(text);
+    } else {
+      statusLabel.setText(text);
+      statusLabel.setForeground(color);
+      statusLabel.repaint();
+    }
     mainPanel.revalidate();
     mainPanel.repaint();
+  }
+
+  void showLoading(String msg) {
+    loading = true;
+    loadingPanel.start(msg);
+    ((CardLayout) centerCard.getLayout()).show(centerCard, "loading");
+    statusLabel.setText(" ");
+    mainPanel.revalidate();
+    mainPanel.repaint();
+  }
+
+  void hideLoading() {
+    loading = false;
+    loadingPanel.stop();
+    ((CardLayout) centerCard.getLayout()).show(centerCard, "results");
+    statusLabel.setText(" ");
+    mainPanel.revalidate();
+    mainPanel.repaint();
+  }
+
+  // ── Loading spinner ───────────────────────────────────────────────────────
+
+  private static class LoadingPanel extends JPanel {
+
+    private final JLabel msgLabel;
+    private int angle = 0;
+    private final Timer spinTimer;
+
+    LoadingPanel() {
+      setOpaque(false);
+      setLayout(new BorderLayout());
+
+      JPanel arc = new JPanel() {
+        @Override
+        protected void paintComponent(Graphics g) {
+          super.paintComponent(g);
+          Graphics2D g2 = (Graphics2D) g.create();
+          g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
+                              RenderingHints.VALUE_ANTIALIAS_ON);
+          int cx = getWidth() / 2, cy = getHeight() / 2, r = 22;
+          g2.setStroke(new BasicStroke(3.5f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+          g2.setColor(new Color(200, 200, 200, 70));
+          g2.drawOval(cx - r, cy - r, r * 2, r * 2);
+          g2.setColor(new Color(100, 160, 220));
+          g2.drawArc(cx - r, cy - r, r * 2, r * 2, angle, 270);
+          g2.dispose();
+        }
+      };
+      arc.setOpaque(false);
+      arc.setPreferredSize(new Dimension(60, 60));
+
+      msgLabel = new JLabel("Processing…", SwingConstants.CENTER);
+      msgLabel.setFont(msgLabel.getFont().deriveFont(11f));
+      msgLabel.setForeground(Color.GRAY);
+
+      JPanel inner = new JPanel();
+      inner.setOpaque(false);
+      inner.setLayout(new BoxLayout(inner, BoxLayout.Y_AXIS));
+      arc.setAlignmentX(Component.CENTER_ALIGNMENT);
+      msgLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+      inner.add(Box.createVerticalGlue());
+      inner.add(arc);
+      inner.add(Box.createVerticalStrut(12));
+      inner.add(msgLabel);
+      inner.add(Box.createVerticalGlue());
+
+      add(inner, BorderLayout.CENTER);
+
+      spinTimer = new Timer(40, ev -> {
+        angle = (angle + 10) % 360;
+        arc.repaint();
+      });
+    }
+
+    void start(String msg) { msgLabel.setText(msg); spinTimer.start(); }
+    void stop()            { spinTimer.stop(); }
+    void setMessage(String msg) { msgLabel.setText(msg); }
   }
 }

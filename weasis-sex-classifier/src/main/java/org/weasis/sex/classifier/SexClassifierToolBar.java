@@ -5,15 +5,23 @@
  */
 package org.weasis.sex.classifier;
 
+import java.awt.BasicStroke;
+import java.awt.Color;
+import java.awt.Component;
+import java.awt.Graphics;
+import java.awt.Graphics2D;
+import java.awt.RenderingHints;
 import java.io.File;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import javax.swing.Icon;
 import javax.swing.JButton;
 import javax.swing.JOptionPane;
 import javax.swing.SwingUtilities;
+import javax.swing.Timer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.weasis.core.api.media.data.MediaElement;
@@ -35,6 +43,7 @@ public class SexClassifierToolBar extends WtoolBar {
   public SexClassifierToolBar(int index) {
     super(NAME, index);
 
+    final AnimatedSpinnerIcon spinner = new AnimatedSpinnerIcon(16);
     final JButton btn = new JButton(NAME);
     btn.setToolTipText("Classify the series currently loaded in the viewer"); // NON-NLS
     btn.addActionListener(e -> {
@@ -58,11 +67,16 @@ public class SexClassifierToolBar extends WtoolBar {
       }
 
       btn.setEnabled(false);
-      btn.setText("…");
+      btn.setText("");
+      btn.setIcon(spinner);
+      spinner.start(btn);
+      SexClassifierTool.pushLoading();
 
       SexClassifierAction.runPipelineAsync(files, result -> {
-        btn.setEnabled(true);
+        spinner.stop();
+        btn.setIcon(null);
         btn.setText(NAME);
+        btn.setEnabled(true);
         // Push results to the side panel — that is where they are displayed
         SexClassifierTool.pushResult(result);
         // Only surface a dialog on error (success is visible in the side panel)
@@ -103,5 +117,44 @@ public class SexClassifierToolBar extends WtoolBar {
       LOGGER.warn("Could not read viewer files: {}", e.getMessage());
     }
     return new ArrayList<>(files);
+  }
+
+  // ── Spinning icon for the button ──────────────────────────────────────────
+
+  private static class AnimatedSpinnerIcon implements Icon {
+
+    private int angle = 0;
+    private final int size;
+    private final Timer timer;
+    private Component target;
+
+    AnimatedSpinnerIcon(int size) {
+      this.size = size;
+      timer = new Timer(40, ev -> {
+        angle = (angle + 10) % 360;
+        if (target != null) target.repaint();
+      });
+    }
+
+    void start(Component c) { target = c; timer.start(); }
+    void stop()             { timer.stop(); target = null; }
+
+    @Override
+    public void paintIcon(Component c, Graphics g, int x, int y) {
+      Graphics2D g2 = (Graphics2D) g.create();
+      g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
+                          RenderingHints.VALUE_ANTIALIAS_ON);
+      int r = size / 2 - 2;
+      int cx = x + size / 2, cy = y + size / 2;
+      g2.setStroke(new BasicStroke(2f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+      g2.setColor(new Color(180, 180, 180, 90));
+      g2.drawOval(cx - r, cy - r, r * 2, r * 2);
+      g2.setColor(new Color(80, 140, 200));
+      g2.drawArc(cx - r, cy - r, r * 2, r * 2, angle, 270);
+      g2.dispose();
+    }
+
+    @Override public int getIconWidth()  { return size; }
+    @Override public int getIconHeight() { return size; }
   }
 }
