@@ -241,12 +241,11 @@ $INPUT_DIR  = Join-Path $BIN_DIST "weasis"
 $IMAGE_PATH = Join-Path $Output $APP_NAME
 
 # ---------------------------------------------------------------------------
-# Injetar icone customizado (assets\icon.png -> $APP_NAME.ico e Dicomizer.ico)
+# Injetar icone customizado (assets\icon.png -> $APP_NAME.ico)
 # jpackage usa automaticamente o .ico cujo nome coincide com --name no resource-dir.
 # ---------------------------------------------------------------------------
-$icoPath     = Join-Path $RES "$APP_NAME.ico"
-$dcomIcoPath = Join-Path $RES "Dicomizer.ico"
-$iconSrc     = Join-Path $labromRoot "assets\icon.png"
+$icoPath = Join-Path $RES "$APP_NAME.ico"
+$iconSrc = Join-Path $labromRoot "assets\icon.png"
 if (Test-Path $iconSrc) {
     $magick = Get-Command magick -ErrorAction SilentlyContinue
     if (-not $magick) {
@@ -255,17 +254,15 @@ if (Test-Path $iconSrc) {
     }
     if ($magick) {
         Write-Host "-- Gerando icone customizado ($APP_NAME.ico) --"
-        foreach ($dst in @($icoPath, $dcomIcoPath)) {
-            & $magick $iconSrc -background black -gravity center `
-                "(" -clone 0 -resize 16x16   -extent 16x16   ")" `
-                "(" -clone 0 -resize 32x32   -extent 32x32   ")" `
-                "(" -clone 0 -resize 48x48   -extent 48x48   ")" `
-                "(" -clone 0 -resize 64x64   -extent 64x64   ")" `
-                "(" -clone 0 -resize 128x128 -extent 128x128 ")" `
-                "(" -clone 0 -resize 256x256 -extent 256x256 ")" `
-                -delete 0 $dst 2>$null
-            Write-Host ("[OK]    Icone -> " + (Split-Path $dst -Leaf))
-        }
+        & $magick $iconSrc -background black -gravity center `
+            "(" -clone 0 -resize 16x16   -extent 16x16   ")" `
+            "(" -clone 0 -resize 32x32   -extent 32x32   ")" `
+            "(" -clone 0 -resize 48x48   -extent 48x48   ")" `
+            "(" -clone 0 -resize 64x64   -extent 64x64   ")" `
+            "(" -clone 0 -resize 128x128 -extent 128x128 ")" `
+            "(" -clone 0 -resize 256x256 -extent 256x256 ")" `
+            -delete 0 $icoPath 2>$null
+        Write-Host ("[OK]    Icone -> " + (Split-Path $icoPath -Leaf))
     } else {
         Write-Warning "[WARN]  ImageMagick nao encontrado -- icone customizado nao gerado."
         Write-Warning "        Instale: winget install ImageMagick.ImageMagick"
@@ -287,16 +284,6 @@ $JDK_MODULES = "java.base,java.compiler,java.datatransfer,java.net.http,java.des
 
 if (Test-Path $Output) { Remove-Item -Recurse -Force $Output }
 
-# JDK 26 requer caminho absoluto para 'icon' em launcher property files.
-# Java .properties usa '\' como escape (\n, \r viram newline/CR), entao
-# usamos forward slashes no caminho absoluto.
-$dicomLauncherTmp  = Join-Path $env:TEMP "dicomizer-launcher.properties"
-$iconAbsPath       = (Join-Path $RES "Dicomizer.ico") -replace '\\', '/'
-$launcherContent   = (Get-Content (Join-Path $RES "dicomizer-launcher.properties")) `
-                         -replace '^icon=.*$', "icon=$iconAbsPath"
-[System.IO.File]::WriteAllLines($dicomLauncherTmp, $launcherContent,
-    [System.Text.UTF8Encoding]::new($false))
-
 Write-Host ""
 Write-Host "-- Gerando imagem do app com jpackage --"
 
@@ -308,7 +295,6 @@ Write-Host "-- Gerando imagem do app com jpackage --"
     --main-jar weasis-launcher.jar `
     --main-class org.weasis.launcher.AppLauncher `
     --add-modules $JDK_MODULES `
-    "--add-launcher" ("Dicomizer=" + $dicomLauncherTmp) `
     --resource-dir $RES `
     --app-version $CLEAN_VERSION `
     --java-options "-Dgosh.port=17179" `
