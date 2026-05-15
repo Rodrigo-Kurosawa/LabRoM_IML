@@ -33,12 +33,27 @@ die()     { echo -e "${RED}[ERRO]${RESET}  $*" >&2; exit 1; }
 
 # ─── Localização do script ───────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BIN_DIST="${SCRIPT_DIR}/bin-dist"
-BUILD_SCRIPT="${SCRIPT_DIR}/build/script/package-weasis.sh"
-BUILD_PROPS="${SCRIPT_DIR}/build/script/build.properties"
+APP_NAME="LabRoM_IML"
+
+# Se o script foi copiado para weasis-native pelo run_weasis.sh, SCRIPT_DIR
+# aponta para weasis-native. Detecta automaticamente o diretório com bin-dist.
+NATIVE_DIR="$SCRIPT_DIR"
+if [[ ! -d "$NATIVE_DIR/bin-dist" ]]; then
+  _alt="$(dirname "$SCRIPT_DIR")/weasis-native"
+  [[ -d "$_alt/bin-dist" ]] && NATIVE_DIR="$_alt"
+fi
+
+BIN_DIST="${NATIVE_DIR}/bin-dist"
+BUILD_SCRIPT="${NATIVE_DIR}/build/script/package-weasis.sh"
+BUILD_PROPS="${NATIVE_DIR}/build/script/build.properties"
 
 # ─── LabRoM/IML: diretórios do plugin ────────────────────────────────────────
-LABROM_DIR="$(dirname "$SCRIPT_DIR")/LabRoM_IML"
+# Funciona quando rodado de LabRoM_IML/ ou de weasis-native/ (após cópia pelo run_weasis.sh).
+if [[ -d "$SCRIPT_DIR/assets" ]]; then
+  LABROM_DIR="$SCRIPT_DIR"
+else
+  LABROM_DIR="$(dirname "$SCRIPT_DIR")/$APP_NAME"
+fi
 SEX_CLASSIFIER_DIR="${LABROM_DIR}/weasis-sex-classifier"
 
 # ─── Defaults ────────────────────────────────────────────────────────────────
@@ -288,11 +303,15 @@ _setup_standalone_python() {
   local pip_bin="$target_dir/bin/pip3"
   [[ -x "$pip_bin" ]] || "$target_dir/bin/python3" -m ensurepip --upgrade &>/dev/null
 
-  info "Instalando dependências Python (ultralytics, torch, opencv-python, grad-cam)..."
+  info "Instalando dependências Python (torch, ultralytics, pydicom, pillow, grad-cam)..."
   "$pip_bin" install --upgrade pip --quiet
   "$pip_bin" install \
+    pillow \
+    pydicom \
+    "pylibjpeg[all]" \
     ultralytics \
     torch \
+    torchvision \
     opencv-python \
     grad-cam \
     --quiet
@@ -319,10 +338,12 @@ SITECUSTOMIZE
 _app_dir_in_image() {
   local platform="$1"   # macosx | linux | windows
   local out="$2"        # caminho de saída do jpackage
+  # No Linux, jpackage usa NAME_LINUX="labrom-iml" (minúsculo, sem underscore)
+  # porque dpkg-deb exige esse formato. Nos demais, usa APP_NAME diretamente.
   case "$platform" in
-    macosx)  echo "${out}/LabRoM_IML.app/Contents/app" ;;
-    linux)   echo "${out}/LabRoM_IML/lib/app" ;;
-    windows) echo "${out}/LabRoM_IML/app" ;;
+    macosx)  echo "${out}/${APP_NAME}.app/Contents/app" ;;
+    linux)   echo "${out}/labrom-iml/lib/app" ;;
+    windows) echo "${out}/${APP_NAME}/app" ;;
     *)       echo "" ;;
   esac
 }
@@ -455,8 +476,8 @@ case "$TARGET_PLATFORM" in
     # para que o app instalado receba os JARs atualizados (base-viewer2d + sex-classifier).
     # Sem isso, o usuário abre o app antigo de /Applications e o Felix usa os JARs desatualizados.
     _pkg_file=$(ls "${OUTPUT_PATH}"/*.pkg 2>/dev/null | head -1)
-    if [[ -n "$_pkg_file" && -d "/Applications/LabRoM_IML.app" ]]; then
-      info "App instalado detectado — reinstalando o .pkg para atualizar /Applications/LabRoM_IML.app ..."
+    if [[ -n "$_pkg_file" && -d "/Applications/${APP_NAME}.app" ]]; then
+      info "App instalado detectado — reinstalando o .pkg para atualizar /Applications/${APP_NAME}.app ..."
       if sudo installer -pkg "$_pkg_file" -target / 2>&1; then
         rm -rf ~/.weasis/cache-D264E300 2>/dev/null || true
         success "App reinstalado com sucesso. Cache Felix limpo."

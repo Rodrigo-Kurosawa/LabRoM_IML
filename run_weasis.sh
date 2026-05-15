@@ -10,6 +10,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+APP_NAME="LabRoM_IML"
 DEST_DIR="$(dirname "$SCRIPT_DIR")/weasis-native"
 BIN_DIR="$DEST_DIR/bin-dist/weasis"
 BUNDLE_DIR="$BIN_DIR/bundle"
@@ -187,13 +188,10 @@ _inject_images() {
   echo "Injetando imagens customizadas..."
 
   if [ -f "$icon_src" ]; then
-    _img_resize_black "$icon_src" "$DEST_DIR/build/script/resources/linux/Weasis.png"    64  64
-    _img_resize_black "$icon_src" "$DEST_DIR/build/script/resources/linux/Dicomizer.png" 64  64
+    _img_resize_black "$icon_src" "$DEST_DIR/build/script/resources/linux/Weasis.png" 64 64
     _make_ico         "$icon_src" "$DEST_DIR/build/script/resources/windows/Weasis.ico"
-    _make_ico         "$icon_src" "$DEST_DIR/build/script/resources/windows/Dicomizer.ico"
-    _make_icns        "$icon_src" "$DEST_DIR/build/script/resources/macosx/LabRoM_IML.icns"
+    _make_icns        "$icon_src" "$DEST_DIR/build/script/resources/macosx/${APP_NAME}.icns"
     _make_icns        "$icon_src" "$DEST_DIR/build/script/resources/macosx/Weasis.icns"
-    _make_icns        "$icon_src" "$DEST_DIR/build/script/resources/macosx/Dicomizer.icns"
     # Atualiza também o .icns dentro do dist-output (app já gerado)
     local dist_app
     for dist_app in "$DEST_DIR/dist-output/"*.app; do
@@ -232,7 +230,7 @@ SVGEOF
     icon_b64=$(base64 -i "$icon_src")
     local svg_dir="$DEST_DIR/bin-dist/weasis/resources/svg/logo"
     mkdir -p "$svg_dir"
-    for svg_name in Weasis.svg Dicomizer.svg; do
+    for svg_name in Weasis.svg; do
       cat > "$svg_dir/$svg_name" << SVGEOF
 <svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
   <rect width="512" height="512" fill="#000000"/>
@@ -363,9 +361,9 @@ if [[ "$1" == "--fast" ]]; then
   rm -rf ~/.weasis/cache
   echo "[FAST] Cache OSGi limpo. Iniciando Weasis..."
   cd "$BIN_DIR"
-  JAVA_ARGS=(-Dweasis.name="LabRoM_IML" -cp "weasis-launcher.jar:felix.jar")
+  JAVA_ARGS=(-Dweasis.name="$APP_NAME" -cp "weasis-launcher.jar:felix.jar")
   if [[ "$(uname -s)" == "Darwin" ]]; then
-    JAVA_ARGS=("-Xdock:name=LabRoM_IML" "-Xdock:icon=$SCRIPT_DIR/assets/icon.png" "${JAVA_ARGS[@]}")
+    JAVA_ARGS=("-Xdock:name=$APP_NAME" "-Xdock:icon=$SCRIPT_DIR/assets/icon.png" "${JAVA_ARGS[@]}")
   elif [[ "$(uname -s)" == "Linux" ]] && [ -z "$DISPLAY" ] && [ -z "$WAYLAND_DISPLAY" ]; then
     export DISPLAY=":0"
   fi
@@ -492,9 +490,9 @@ fi
 
 echo "Iniciando Weasis..."
 cd "$BIN_DIR"
-JAVA_ARGS=(-Dweasis.name="LabRoM_IML" -cp "weasis-launcher.jar:felix.jar")
+JAVA_ARGS=(-Dweasis.name="$APP_NAME" -cp "weasis-launcher.jar:felix.jar")
 if [[ "$(uname -s)" == "Darwin" ]]; then
-  JAVA_ARGS=("-Xdock:name=LabRoM_IML" "-Xdock:icon=$SCRIPT_DIR/assets/icon.png" "${JAVA_ARGS[@]}")
+  JAVA_ARGS=("-Xdock:name=$APP_NAME" "-Xdock:icon=$SCRIPT_DIR/assets/icon.png" "${JAVA_ARGS[@]}")
 elif [[ "$(uname -s)" == "Linux" ]]; then
   # Ensure DISPLAY is set for headful Java on Linux
   if [ -z "$DISPLAY" ] && [ -z "$WAYLAND_DISPLAY" ]; then
